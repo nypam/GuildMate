@@ -41,6 +41,33 @@ function Donations:GetRoster()
     return _roster
 end
 
+-- ── Guild-wide sync ───────────────────────────────────────────────────────────
+
+-- Broadcast all known donation totals for the current and previous period to
+-- every online guild member.  Called after every bank scan so any member who
+-- opens the bank pushes their knowledge to all officers, regardless of rank.
+function Donations:BroadcastKnownTotals()
+    local goal       = GM.DB:GetActiveGoal()
+    local periodType = goal and goal.period or "weekly"
+    local prevOffset = (periodType == "weekly") and (7 * 86400) or (32 * 86400)
+
+    local periods = {
+        Utils.PeriodKey(time(), periodType),
+        Utils.PeriodKey(time() - prevOffset, periodType),
+    }
+
+    for memberKey, _ in pairs(GM.DB.sv.donations) do
+        for _, periodKey in ipairs(periods) do
+            local total = GM.DB:GetDonated(memberKey, periodKey)
+            if total > 0 then
+                GM:SendCommMessage("GuildMate",
+                    string.format("DONATION_TOTAL|%s|%s|%d", memberKey, periodKey, total),
+                    "GUILD")
+            end
+        end
+    end
+end
+
 -- ── Transaction log parsing ───────────────────────────────────────────────────
 
 function Donations:ProcessTransactionLog()
@@ -114,6 +141,11 @@ function Donations:ProcessTransactionLog()
     if changed then
         GM.MainFrame:RefreshActiveView()
     end
+
+    -- Always broadcast all known totals after a bank scan, regardless of whether
+    -- new transactions were found.  Any guild member who opens the bank will push
+    -- their full knowledge to every online officer — not just newly-found entries.
+    Donations:BroadcastKnownTotals()
 end
 
 -- ── Goal broadcast ───────────────────────────────────────────────────────────
@@ -161,7 +193,15 @@ function Donations:OnCommReceived(message)
         local total = tonumber(totalStr)
         if memberKey and periodKey and total then
             GM.DB:SetDonationTotal(memberKey, periodKey, total)
-            GM.MainFrame:RefreshActiveView()
+            -- Debounce: a bulk sync sends many messages at once; only redraw once
+            -- they've all landed rather than once per message.
+            if not Donations._refreshPending then
+                Donations._refreshPending = true
+                C_Timer.After(0.5, function()
+                    Donations._refreshPending = false
+                    GM.MainFrame:RefreshActiveView()
+                end)
+            end
         end
 
     elseif cmd == "GOAL_UPDATE" then

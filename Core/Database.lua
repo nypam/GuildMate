@@ -131,7 +131,7 @@ end
 function DB:GetMemberRecord(memberKey)
     if not self.sv.donations[memberKey] then
         self.sv.donations[memberKey] = {
-            records     = {},   -- [periodKey] = totalCopper
+            records     = {},   -- [periodKey] = { own=N, synced=N }
             lastDeposit = 0,
             rankIndex   = -1,
         }
@@ -139,19 +139,37 @@ function DB:GetMemberRecord(memberKey)
     return self.sv.donations[memberKey]
 end
 
--- Add copper to a member's period total; returns the new total
-function DB:AddDonation(memberKey, periodKey, copper)
-    local rec = self:GetMemberRecord(memberKey)
-    rec.records[periodKey] = (rec.records[periodKey] or 0) + copper
-    rec.lastDeposit = time()
+-- Ensure a period entry is in {own, synced} format.
+-- Migrates legacy plain-number entries written by older addon versions.
+local function _Normalize(rec, periodKey)
+    local r = rec.records[periodKey]
+    if r == nil then
+        rec.records[periodKey] = { own = 0, synced = 0 }
+    elseif type(r) == "number" then
+        rec.records[periodKey] = { own = r, synced = 0 }
+    end
     return rec.records[periodKey]
 end
 
--- Donated copper for a member in a specific period (0 if none)
+-- Add copper from a bank transaction this client personally read.
+-- Returns the new effective total (max of own and synced).
+function DB:AddDonation(memberKey, periodKey, copper)
+    local rec = self:GetMemberRecord(memberKey)
+    local r = _Normalize(rec, periodKey)
+    r.own = r.own + copper
+    rec.lastDeposit = time()
+    return math.max(r.own, r.synced)
+end
+
+-- Donated copper for a member in a specific period (0 if none).
+-- Returns max(own, synced) so either source produces the correct total.
 function DB:GetDonated(memberKey, periodKey)
     local rec = self.sv.donations[memberKey]
     if not rec then return 0 end
-    return rec.records[periodKey] or 0
+    local r = rec.records[periodKey]
+    if not r then return 0 end
+    if type(r) == "number" then return r end  -- legacy entry not yet normalised
+    return math.max(r.own or 0, r.synced or 0)
 end
 
 -- Update a member's rank index (called on roster refresh)
@@ -191,13 +209,13 @@ end
 
 -- ── Idempotent total setter (used by comm sync) ───────────────────────────────
 
--- Sets a member's period total to max(current, newTotal).
--- Safe to call multiple times with the same value — never decreases a total.
+-- Updates the synced (comm-received) total to max(current_synced, newTotal).
+-- Never touches own (bank-captured) total, so the two sources stay independent.
 function DB:SetDonationTotal(memberKey, periodKey, newTotal)
     local rec = self:GetMemberRecord(memberKey)
-    local current = rec.records[periodKey] or 0
-    if newTotal > current then
-        rec.records[periodKey] = newTotal
+    local r = _Normalize(rec, periodKey)
+    if newTotal > r.synced then
+        r.synced = newTotal
         rec.lastDeposit = time()
     end
 end

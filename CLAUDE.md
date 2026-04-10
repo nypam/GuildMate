@@ -42,11 +42,16 @@ This file exists so a Claude session on any machine can immediately understand t
 - [ ] Edge case: member name contains a `-` before the realm hyphen (SplitMemberKey may mismatch)
 - [ ] `/gm scanlog` and `/gm testbank` are debug commands; decide whether to keep or remove before release
 
+### Residual sync limitation
+Any deposit that rolls off the 25-entry bank log before any guild member opens the bank
+is permanently unrecoverable (hard WoW API limitation). Mitigate by opening the bank regularly.
+
 ---
 
 ## File map
 
 ```
+Updates.md                 — Human-readable changelog (newest first)
 guildMate.toc              — Load order; Interface: 20504
 guildMate.lua              — Addon entry point: OnInitialize, OnEnable, slash commands, minimap
 embeds.xml                 — Loads all Libs/
