@@ -138,8 +138,10 @@ function Utils.MemberKey(name, realm)
 end
 
 -- Split "Name-Realm" → name, realm
+-- Greedy first group splits on the LAST hyphen, so hyphenated names
+-- like "Some-Name-Sulfuras" correctly yield ("Some-Name", "Sulfuras").
 function Utils.SplitMemberKey(key)
-    return key:match("^(.+)-(.+)$")
+    return key:match("^(.+)-([^-]+)$")
 end
 
 -- ── Colour helpers ────────────────────────────────────────────────────────────
@@ -171,10 +173,9 @@ end
 -- ── Frame colour helpers ──────────────────────────────────────────────────────
 
 -- Set a solid-colour background on any WoW frame.
--- Compatible with all client versions: uses SetColorTexture when available,
--- falls back to SetTexture(r,g,b,a) for the TBC-era API.
 -- Stores the texture in frame._gmBg so repeated calls just update the colour.
-function Utils.SetFrameColor(frame, r, g, b, a)
+-- If `aceWidget` is provided, hooks OnRelease to hide the texture when recycled.
+function Utils.SetFrameColor(frame, r, g, b, a, aceWidget)
     if not frame then return end
     if not frame._gmBg then
         local tex = frame:CreateTexture(nil, "BACKGROUND")
@@ -185,6 +186,17 @@ function Utils.SetFrameColor(frame, r, g, b, a)
         frame._gmBg:SetColorTexture(r, g, b, a or 1)
     else
         frame._gmBg:SetTexture(r, g, b, a or 1)
+    end
+    frame._gmBg:Show()
+
+    -- Register cleanup so recycled AceGUI widgets don't leak textures
+    if aceWidget and not aceWidget._gmBgHooked then
+        aceWidget._gmBgHooked = true
+        local origOnRelease = aceWidget.OnRelease
+        aceWidget.OnRelease = function(self)
+            if self.frame._gmBg then self.frame._gmBg:Hide() end
+            if origOnRelease then origOnRelease(self) end
+        end
     end
 end
 
@@ -205,6 +217,69 @@ function Utils.Truncate(str, maxLen)
     if #str <= maxLen then return str end
     return str:sub(1, maxLen - 1) .. "…"
 end
+
+-- ── Progress bar helpers ──────────────────────────────────────────────────────
+
+-- Large progress bar built entirely from AceGUI widgets — no native frames.
+-- Uses a Label with background textures painted on its frame.
+-- Returns the AceGUI Label widget. Callers just AddChild it.
+--   text     = text shown centered on the bar (e.g. "3g / 5g  (60%)")
+--   frac     = fill fraction 0-1
+--   r, g, b  = fill colour
+function Utils.CreateProgressBar(text, frac, r, g, b)
+    local AceGUI = LibStub("AceGUI-3.0")
+    frac = math.max(0, math.min(1, frac or 0))
+
+    -- Use a dedicated child frame so textures don't pollute the recycled Label
+    local lbl = AceGUI:Create("Label")
+    lbl:SetText(" ")
+    lbl:SetFullWidth(true)
+    lbl:SetHeight(22)
+
+    local f = lbl.frame
+
+    -- Container frame owned by us — destroyed on release, never recycled
+    local bar = CreateFrame("Frame", nil, f)
+    bar:SetPoint("TOPLEFT", f, "TOPLEFT", 2, -1)
+    bar:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -2, 1)
+
+    -- Dark track background
+    local track = bar:CreateTexture(nil, "BACKGROUND")
+    track:SetAllPoints()
+    track:SetTexture("Interface\\RAIDFRAME\\Raid-Bar-Hp-Fill")
+    track:SetVertexColor(0.12, 0.12, 0.12, 0.9)
+
+    -- Coloured fill
+    local fill = bar:CreateTexture(nil, "BORDER")
+    fill:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0)
+    fill:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 0, 0)
+    fill:SetTexture("Interface\\RAIDFRAME\\Raid-Bar-Hp-Fill")
+    fill:SetVertexColor(r or 0.2, g or 0.8, b or 0.2, 0.85)
+    fill:SetWidth(1)
+
+    -- Text overlay
+    local barText = bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    barText:SetPoint("LEFT", bar, "LEFT", 6, 0)
+    barText:SetText(text or "")
+    barText:SetTextColor(1, 1, 1, 1)
+
+    -- Update fill width when sized by AceGUI layout
+    bar:SetScript("OnSizeChanged", function(self, width)
+        fill:SetWidth(math.max(1, width * frac))
+    end)
+
+    -- Clean up the child frame when AceGUI recycles the Label
+    local origOnRelease = lbl.OnRelease
+    lbl.OnRelease = function(self)
+        bar:Hide()
+        bar:SetParent(nil)
+        if origOnRelease then origOnRelease(self) end
+    end
+
+    return lbl
+end
+
+-- ── Class colour ─────────────────────────────────────────────────────────────
 
 -- Class colour hex string (e.g. "ff8156" for Warlock)
 local CLASS_COLORS = {

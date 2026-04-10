@@ -1,14 +1,14 @@
-## Interface: 20504
+## Interface: 20505
 ## Title: |cff4A90D9Guild|rMate
 ## Notes: Guild management tools — Donation tracking and more
-## Author: guildMate
+## Author: Nypp
 ## Version: 0.1.0
 ## SavedVariables: GuildMateDB
 ## X-Category: Guild
 
 embeds.xml
 
-guildMate.lua
+GuildMate.lua
 
 Core\Database.lua
 Core\Utils.lua

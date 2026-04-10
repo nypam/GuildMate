@@ -48,49 +48,104 @@ function SettingsView:Render(container, onBack)
 
     self:_AddSpacer(scroll, 8)
 
-    -- ── Officer Ranks ─────────────────────────────────────────────────────────
-    self:_SectionHeader(scroll, "Officer Ranks")
+    -- Check if the current player is an officer
+    local _, _, playerRankIndex = GetGuildInfo("player")
+    local isOfficer = GM.debugOfficer or GM.DB:IsOfficerRank(playerRankIndex or 99)
 
-    local rankDesc = AceGUI:Create("Label")
-    rankDesc:SetText("|cffaaaaaaMembers with these ranks see the full roster and can manage goals.|r")
-    rankDesc:SetFullWidth(true)
-    scroll:AddChild(rankDesc)
+    -- ── Officer-only settings ─────────────────────────────────────────────────
+    if isOfficer then
+        -- ── Officer Ranks ─────────────────────────────────────────────────────
+        self:_SectionHeader(scroll, "Officer Ranks")
 
-    self:_AddSpacer(scroll, 4)
+        local rankDesc = AceGUI:Create("Label")
+        rankDesc:SetText("|cffaaaaaaMembers with these ranks see the full roster and can manage goals.|r")
+        rankDesc:SetFullWidth(true)
+        rankDesc:SetHeight(18)
+        scroll:AddChild(rankDesc)
 
-    local rankBox = AceGUI:Create("SimpleGroup")
-    rankBox:SetLayout("Flow")
-    rankBox:SetFullWidth(true)
-    scroll:AddChild(rankBox)
+        self:_AddSpacer(scroll, 8)
 
-    local numRanks = GuildControlGetNumRanks and GuildControlGetNumRanks() or 0
-    for i = 0, numRanks - 1 do
-        local rankName = (GuildControlGetRankName and GuildControlGetRankName(i)) or ("Rank " .. i)
-        local cb = AceGUI:Create("CheckBox")
-        cb:SetLabel("  " .. rankName)
-        cb:SetValue(GM.DB:IsOfficerRank(i))
-        cb:SetWidth(180)
-        -- Rank 0 (Guild Master) is always an officer — lock it
-        if i == 0 then
-            cb:SetDisabled(true)
-        else
-            local idx = i
-            cb:SetCallback("OnValueChanged", function(_, _, val)
-                local ranks = GM.DB.sv.settings.officerRanks
-                ranks[idx] = val or nil
-                PlaySound(856)
-            end)
+        local rankBox = AceGUI:Create("SimpleGroup")
+        rankBox:SetLayout("Flow")
+        rankBox:SetFullWidth(true)
+        scroll:AddChild(rankBox)
+
+        local numRanks = GuildControlGetNumRanks and GuildControlGetNumRanks() or 0
+        for i = 0, numRanks - 1 do
+            local rankName = (GuildControlGetRankName and GuildControlGetRankName(i + 1)) or ("Rank " .. i)
+            local cb = AceGUI:Create("CheckBox")
+            cb:SetLabel("  " .. rankName)
+            cb:SetValue(GM.DB:IsOfficerRank(i))
+            cb:SetWidth(180)
+            if i == 0 then
+                cb:SetDisabled(true)
+            else
+                local idx = i
+                cb:SetCallback("OnValueChanged", function(_, _, val)
+                    local ranks = GM.DB.sv.settings.officerRanks
+                    ranks[idx] = val or nil
+                    PlaySound(856)
+                end)
+            end
+            rankBox:AddChild(cb)
         end
-        rankBox:AddChild(cb)
+
+        self:_AddSpacer(scroll, 14)
+
+        -- ── Announce Channel ──────────────────────────────────────────────────
+        self:_SectionHeader(scroll, "Announce Channel")
+
+        local chanDesc = AceGUI:Create("Label")
+        chanDesc:SetText("|cffaaaaaaWhere to post progress summaries when you click \"Announce to Guild\".|r")
+        chanDesc:SetFullWidth(true)
+        scroll:AddChild(chanDesc)
+
+        self:_AddSpacer(scroll, 4)
+
+        local chanGroup = AceGUI:Create("SimpleGroup")
+        chanGroup:SetLayout("Flow")
+        chanGroup:SetFullWidth(true)
+        scroll:AddChild(chanGroup)
+
+        local channels = {
+            { value = "GUILD",   label = "Guild Chat"   },
+            { value = "OFFICER", label = "Officer Chat" },
+            { value = "OFF",     label = "Off"          },
+        }
+
+        local btns = {}
+        local currentChan = GM.DB:GetSetting("announceChannel") or "GUILD"
+
+        for _, ch in ipairs(channels) do
+            local btn = AceGUI:Create("CheckBox")
+            btn:SetLabel("  " .. ch.label)
+            btn:SetType("radio")
+            btn:SetValue(currentChan == ch.value)
+            btn:SetWidth(150)
+            local chValue = ch.value
+            btn:SetCallback("OnValueChanged", function(_, _, val)
+                if val then
+                    GM.DB:SetSetting("announceChannel", chValue)
+                    for _, other in ipairs(btns) do
+                        if other ~= btn then other:SetValue(false) end
+                    end
+                    PlaySound(856)
+                end
+            end)
+            table.insert(btns, btn)
+            chanGroup:AddChild(btn)
+        end
+
+        self:_AddSpacer(scroll, 14)
     end
 
-    self:_AddSpacer(scroll, 14)
+    -- ── Settings visible to everyone ──────────────────────────────────────────
 
-    -- ── Reminder ──────────────────────────────────────────────────────────────
+    -- ── Login Reminder ──────────────────────────────────────────────────────
     self:_SectionHeader(scroll, "Login Reminder")
 
     local remindToggle = AceGUI:Create("CheckBox")
-    remindToggle:SetLabel("  Whisper members who haven't donated when they log in")
+    remindToggle:SetLabel("  Show a reminder on login if I haven't met the donation goal")
     remindToggle:SetFullWidth(true)
     remindToggle:SetValue(GM.DB:GetSetting("reminderEnabled"))
     remindToggle:SetCallback("OnValueChanged", function(_, _, val)
@@ -99,70 +154,20 @@ function SettingsView:Render(container, onBack)
     end)
     scroll:AddChild(remindToggle)
 
-    self:_AddSpacer(scroll, 8)
-
-    local msgHeader = AceGUI:Create("Label")
-    msgHeader:SetText("Reminder message  |cffaaaaaa(%s = name, %g = goal, %p = period, %d = donated)|r")
-    msgHeader:SetFullWidth(true)
-    scroll:AddChild(msgHeader)
-
-    local msgBox = AceGUI:Create("MultiLineEditBox")
-    msgBox:SetLabel("")
-    msgBox:SetText(GM.DB:GetSetting("reminderMessage"))
-    msgBox:SetFullWidth(true)
-    msgBox:SetNumLines(3)
-    msgBox:SetCallback("OnEnterPressed", function(_, _, val)
-        GM.DB:SetSetting("reminderMessage", val)
-        GM:Print("|cff4A90D9GuildMate:|r Reminder message saved.")
-    end)
-    scroll:AddChild(msgBox)
-
     self:_AddSpacer(scroll, 14)
 
-    -- ── Announce Channel ──────────────────────────────────────────────────────
-    self:_SectionHeader(scroll, "Announce Channel")
+    -- ── Goal Met Announcement ─────────────────────────────────────────────────
+    self:_SectionHeader(scroll, "Goal Met Announcement")
 
-    local chanDesc = AceGUI:Create("Label")
-    chanDesc:SetText("|cffaaaaaaWhere to post progress summaries when you click \"Announce to Guild\".|r")
-    chanDesc:SetFullWidth(true)
-    scroll:AddChild(chanDesc)
-
-    self:_AddSpacer(scroll, 4)
-
-    local chanGroup = AceGUI:Create("SimpleGroup")
-    chanGroup:SetLayout("Flow")
-    chanGroup:SetFullWidth(true)
-    scroll:AddChild(chanGroup)
-
-    local channels = {
-        { value = "GUILD",   label = "Guild Chat"   },
-        { value = "OFFICER", label = "Officer Chat" },
-        { value = "OFF",     label = "Off"          },
-    }
-
-    local btns = {}
-    local currentChan = GM.DB:GetSetting("announceChannel") or "GUILD"
-
-    for _, ch in ipairs(channels) do
-        local btn = AceGUI:Create("CheckBox")
-        btn:SetLabel("  " .. ch.label)
-        btn:SetType("radio")
-        btn:SetValue(currentChan == ch.value)
-        btn:SetWidth(150)
-        local chValue = ch.value
-        btn:SetCallback("OnValueChanged", function(_, _, val)
-            if val then
-                GM.DB:SetSetting("announceChannel", chValue)
-                -- Deselect the others
-                for _, other in ipairs(btns) do
-                    if other ~= btn then other:SetValue(false) end
-                end
-                PlaySound(856)
-            end
-        end)
-        table.insert(btns, btn)
-        chanGroup:AddChild(btn)
-    end
+    local goalMetToggle = AceGUI:Create("CheckBox")
+    goalMetToggle:SetLabel("  Announce in guild chat when a member meets the donation goal")
+    goalMetToggle:SetFullWidth(true)
+    goalMetToggle:SetValue(GM.DB:GetSetting("goalMetAnnounce"))
+    goalMetToggle:SetCallback("OnValueChanged", function(_, _, val)
+        GM.DB:SetSetting("goalMetAnnounce", val)
+        PlaySound(856)
+    end)
+    scroll:AddChild(goalMetToggle)
 
     self:_AddSpacer(scroll, 20)
 

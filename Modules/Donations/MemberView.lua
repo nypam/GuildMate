@@ -13,6 +13,7 @@ GM.MemberView = MemberView
 -- ── Render ────────────────────────────────────────────────────────────────────
 
 function MemberView:Render(container)
+    local outerContainer = container
     container:ReleaseChildren()
     container:SetLayout("Fill")
 
@@ -36,12 +37,28 @@ function MemberView:Render(container)
     local frac      = (goal and goal.goldAmount > 0) and math.min(1, donated / goal.goldAmount) or 0
     local color     = Utils.StatusColor(frac)
 
-    -- ── Title ─────────────────────────────────────────────────────────────────
+    -- ── Title row with settings button ────────────────────────────────────────
+    local headerGroup = AceGUI:Create("SimpleGroup")
+    headerGroup:SetLayout("Flow")
+    headerGroup:SetFullWidth(true)
+    container:AddChild(headerGroup)
+
     local title = AceGUI:Create("Label")
     title:SetText("|cff4A90D9YOUR DONATION STATUS|r")
     title:SetFont(Utils.Font(GameFontHighlight, 16))
-    title:SetFullWidth(true)
-    container:AddChild(title)
+    title:SetRelativeWidth(0.9)
+    headerGroup:AddChild(title)
+
+    local settingsBtn = AceGUI:Create("Button")
+    settingsBtn:SetText("⚙")
+    settingsBtn:SetWidth(38)
+    settingsBtn:SetCallback("OnClick", function()
+        PlaySound(856)
+        GM.SettingsView:Render(outerContainer, function()
+            MemberView:Render(outerContainer)
+        end)
+    end)
+    headerGroup:AddChild(settingsBtn)
 
     self:_AddSpacer(container, 8)
 
@@ -52,7 +69,7 @@ function MemberView:Render(container)
     card:SetFullWidth(true)
     container:AddChild(card)
 
-    Utils.SetFrameColor(card.frame, color[1], color[2], color[3], 0.12)
+    Utils.SetFrameColor(card.frame, color[1], color[2], color[3], 0.12, card)
 
     if goal then
         -- Goal headline
@@ -76,20 +93,13 @@ function MemberView:Render(container)
 
         self:_AddSpacer(card, 6)
 
-        -- Progress bar (large, prominent)
-        local pct     = math.floor(frac * 100)
-        local filled  = math.floor(pct / 5)    -- 20-block bar
-        local empty   = 20 - filled
-        local barStr  = "|cff" ..
-            string.format("%02x%02x%02x", color[1]*255, color[2]*255, color[3]*255) ..
-            string.rep("█", filled) .. "|r" ..
-            "|cff333333" .. string.rep("░", empty) .. "|r"
-
-        local barLabel = AceGUI:Create("Label")
-        barLabel:SetText(barStr)
-        barLabel:SetFont(Utils.Font(GameFontHighlight, 14))
-        barLabel:SetFullWidth(true)
-        card:AddChild(barLabel)
+        -- Progress bar
+        local pct = math.floor(frac * 100)
+        local barText = string.format("%s / %s  (%d%%)",
+            Utils.FormatMoneyShort(donated),
+            Utils.FormatMoneyShort(goal.goldAmount), pct)
+        local barWidget = Utils.CreateProgressBar(barText, frac, color[1], color[2], color[3])
+        card:AddChild(barWidget)
 
         -- Numeric summary
         local amtLine = AceGUI:Create("Label")
@@ -158,7 +168,7 @@ function MemberView:Render(container)
             local goalAmt  = goal and goal.goldAmount or 0
             local hfrac    = (goalAmt > 0) and math.min(1, amt / goalAmt) or 1
             local hcolor   = Utils.StatusColor(hfrac)
-            local hicon    = Utils.StatusIcon(hfrac)
+            local hcolorHex = string.format("|cff%02x%02x%02x", hcolor[1]*255, hcolor[2]*255, hcolor[3]*255)
 
             local row = AceGUI:Create("SimpleGroup")
             row:SetLayout("Flow")
@@ -166,10 +176,10 @@ function MemberView:Render(container)
             row:SetHeight(26)
             container:AddChild(row)
 
-            Utils.SetFrameColor(row.frame, hcolor[1], hcolor[2], hcolor[3], 0.20)
+            Utils.SetFrameColor(row.frame, hcolor[1], hcolor[2], hcolor[3], 0.20, row)
 
             local iconLbl = AceGUI:Create("Label")
-            iconLbl:SetText(hicon)
+            iconLbl:SetText(hcolorHex .. "●|r")
             iconLbl:SetWidth(22)
             row:AddChild(iconLbl)
 

@@ -85,6 +85,9 @@ function GoalEditor:_Build(container)
     amtHeader:SetColor(COLOR_HEADER[1], COLOR_HEADER[2], COLOR_HEADER[3])
     scroll:AddChild(amtHeader)
 
+    -- Declare slider before the edit box so the callback can reference it
+    local slider
+
     -- EditBox for typed input
     local amtBox = AceGUI:Create("EditBox")
     amtBox:SetLabel("")
@@ -94,7 +97,7 @@ function GoalEditor:_Build(container)
         local g = tonumber(val)
         if g and g >= 1 then
             _draft.goldAmount = math.floor(g) * 10000
-            slider:SetValue(math.floor(g))
+            if slider then slider:SetValue(math.floor(g)) end
         else
             amtBox:SetText(tostring(math.floor(_draft.goldAmount / 10000)))
         end
@@ -103,7 +106,7 @@ function GoalEditor:_Build(container)
     self._amtBox = amtBox
 
     -- Slider (1g – 500g)
-    local slider = AceGUI:Create("Slider")
+    slider = AceGUI:Create("Slider")
     slider:SetLabel("  " .. SLIDER_MIN_G .. "g ◀──────────────────────▶ " .. SLIDER_MAX_G .. "g")
     slider:SetSliderValues(SLIDER_MIN_G, SLIDER_MAX_G, 1)
     slider:SetValue(math.floor(_draft.goldAmount / 10000))
@@ -173,7 +176,7 @@ function GoalEditor:_Build(container)
 
     local numRanks = GuildControlGetNumRanks and GuildControlGetNumRanks() or 0
     for i = 0, numRanks - 1 do
-        local rankName = GuildControlGetRankName and GuildControlGetRankName(i) or ("Rank " .. i)
+        local rankName = GuildControlGetRankName and GuildControlGetRankName(i + 1) or ("Rank " .. i)
         local cb = AceGUI:Create("CheckBox")
         cb:SetLabel("  " .. rankName)
         cb:SetValue(_draft.targetRanks[i] == true)
@@ -280,10 +283,8 @@ function GoalEditor:_Commit()
     GM.DB:DeactivateAllGoals()
     GM.DB:SaveGoal(goal)
 
-    -- Broadcast the new goal to guild
-    GM:SendCommMessage("GuildMate",
-        string.format("GOAL_UPDATE|%d|%d|%s", goal.id, goal.goldAmount, goal.period),
-        "GUILD")
+    -- Broadcast the new goal to guild (includes targetRanks so all clients can store it)
+    GM.Donations:BroadcastGoal(goal)
 
     GM:Print(string.format(
         "|cff4A90D9GuildMate:|r Goal set — %s per member, %s.",

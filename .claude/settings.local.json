@@ -5,7 +5,8 @@
       "Bash(cp -r '/Applications/World of Warcraft/_anniversary_/Interface/AddOns/Attune/Libs/__TRACKED_VAR__' '/Applications/World of Warcraft/_anniversary_/Interface/AddOns/guildMate/Libs/__TRACKED_VAR__')",
       "Bash(mkdir -p \"/Applications/World of Warcraft/_anniversary_/Interface/AddOns/guildMate/Core\")",
       "Bash(mkdir -p \"/Applications/World of Warcraft/_anniversary_/Interface/AddOns/guildMate/UI\")",
-      "Bash(mkdir -p \"/Applications/World of Warcraft/_anniversary_/Interface/AddOns/guildMate/Modules/Donations\")"
+      "Bash(mkdir -p \"/Applications/World of Warcraft/_anniversary_/Interface/AddOns/guildMate/Modules/Donations\")",
+      "Bash(wc -l guildMate.lua Core/*.lua Modules/Donations/*.lua UI/*.lua)"
     ]
   }
 }

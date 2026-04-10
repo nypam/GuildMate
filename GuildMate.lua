@@ -1,5 +1,5 @@
 -- GuildMate: Addon entry point
--- This file loads FIRST (see guildMate.toc).
+-- This file loads FIRST (see GuildMate.toc).
 -- Creates the AceAddon object; all other files grab it via GetAddon().
 
 local GM = LibStub("AceAddon-3.0"):NewAddon("GuildMate",
@@ -62,7 +62,17 @@ function GM:SlashCommand(input)
         end
         self:Print("_bankOpen: " .. tostring(GM.Events._bankOpen))
         GM.Events._bankOpen = true
+        -- Request fresh log data before processing
+        local moneyTab = (GUILD_BANK_MAX_TABS or 6) + 1
+        if QueryGuildBankLog then
+            QueryGuildBankLog(moneyTab)
+            self:Print("QueryGuildBankLog(" .. moneyTab .. ") called.")
+        else
+            self:Print("QueryGuildBankLog not available.")
+        end
+        -- Process immediately + delayed retry
         GM.Donations:ProcessTransactionLog()
+        C_Timer.After(2, function() GM.Donations:ProcessTransactionLog() end)
     elseif input == "debug" then
         self.debugOfficer = not self.debugOfficer
         self:Print("|cff4A90D9GuildMate:|r Officer view override: " ..

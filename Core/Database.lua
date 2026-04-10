@@ -32,6 +32,9 @@ DB.defaults = {
         -- "GUILD" | "OFFICER" | "OFF"
         announceChannel = "GUILD",
 
+        -- Announce in /g when a member meets their donation goal
+        goalMetAnnounce = true,
+
         -- Main window geometry
         windowWidth  = 900,
         windowHeight = 550,

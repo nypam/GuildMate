@@ -13,11 +13,6 @@ GM.Donations = Donations
 local _roster = {}
 
 function Donations:OnRosterUpdate()
-    -- Good moment to evict expired fingerprints (runs at most once per session)
-    if not Donations._prunedThisSession then
-        GM.DB:PruneSeenTransactions()
-        Donations._prunedThisSession = true
-    end
     wipe(_roster)
     local realm = GetRealmName and GetRealmName() or "Unknown"
     local count = GetNumGuildMembers()
@@ -58,45 +53,60 @@ function Donations:ProcessTransactionLog()
         return
     end
 
-    local goal    = GM.DB:GetActiveGoal()
-    local realm   = GetRealmName and GetRealmName() or "Unknown"
-    local changed = false
+    local goal       = GM.DB:GetActiveGoal()
+    local realm      = GetRealmName and GetRealmName() or "Unknown"
+    local periodType = goal and goal.period or "weekly"
 
-    -- GetNumGuildBankMoneyTransactions() returns 0 even when data exists in TBC Anniversary.
-    -- Just iterate up to 25 and break on nil — same as the raw log cap.
-    GM:Print("|cff4A90D9GuildMate debug:|r ProcessTransactionLog running.")
+    -- Pass 1: sum all deposits from the log, grouped by member+period.
+    -- The log holds up to 25 entries. We sum everything visible rather than
+    -- deduplicating by fingerprint, because identical deposits (same player,
+    -- same amount, same hour) produce the same fingerprint and get lost.
+    -- totals[memberKey][periodKey] = copperFromLog
+    local totals = {}
 
     for i = 1, 25 do
-        -- Money transaction signature: txType, name, amount, year, month, day, hour
-        -- year/month/day/hour are how-long-ago offsets; 0 = just now.
         local txType, name, amount, year, month, day, hour = getMoneyTx(i)
-
         if not txType then break end
 
         if txType == "deposit" and name and amount and amount > 0
            and year ~= nil and month ~= nil and day ~= nil and hour ~= nil then
 
-            local fp = string.format("%s|%d|%d|%d|%d|%d",
-                name, amount, year, month, day, math.floor(hour))
+            local approxTs  = time() - (year * 365 * 86400) - (month * 30 * 86400)
+                                     - (day * 86400) - (math.floor(hour) * 3600)
+            local periodKey = Utils.PeriodKey(approxTs, periodType)
+            local memberKey = Utils.MemberKey(name, realm)
 
-            if not GM.DB:HasSeenTransaction(fp) then
-                GM.DB:MarkTransactionSeen(fp)
+            if not totals[memberKey] then totals[memberKey] = {} end
+            totals[memberKey][periodKey] = (totals[memberKey][periodKey] or 0) + amount
+        end
+    end
 
-                local approxTs  = time() - (year * 365 * 86400) - (month * 30 * 86400)
-                                         - (day * 86400) - (math.floor(hour) * 3600)
-                local periodType = goal and goal.period or "weekly"
-                local periodKey  = Utils.PeriodKey(approxTs, periodType)
-                local memberKey  = Utils.MemberKey(name, realm)
+    -- Pass 2: max-merge log totals into the DB (never decrease, only increase).
+    -- This is idempotent — safe to call on every bank open / money update.
+    local changed = false
 
-                local newTotal = GM.DB:AddDonation(memberKey, periodKey, amount)
+    for memberKey, periods in pairs(totals) do
+        for periodKey, logTotal in pairs(periods) do
+            local prevTotal = GM.DB:GetDonated(memberKey, periodKey)
+
+            if logTotal > prevTotal then
+                GM.DB:SetDonationTotal(memberKey, periodKey, logTotal)
                 changed = true
 
                 GM:SendCommMessage("GuildMate",
-                    string.format("DONATION_TOTAL|%s|%s|%d", memberKey, periodKey, newTotal),
+                    string.format("DONATION_TOTAL|%s|%s|%d", memberKey, periodKey, logTotal),
                     "GUILD")
 
-                GM:Print(string.format("|cff4A90D9GuildMate:|r Recorded %s deposit by %s (%s)",
-                    Utils.FormatMoney(amount), name, Utils.PeriodLabel(periodKey)))
+                -- Announce in guild chat when a member just met the goal
+                if goal and GM.DB:GetSetting("goalMetAnnounce")
+                   and prevTotal < goal.goldAmount
+                   and logTotal >= goal.goldAmount then
+                    local name = memberKey:match("^(.+)-[^-]+$") or memberKey
+                    SendChatMessage(
+                        string.format("[GuildMate] %s has met the %s donation goal of %s!",
+                            name, goal.period, Utils.FormatMoneyShort(goal.goldAmount)),
+                        "GUILD")
+                end
             end
         end
     end
@@ -106,27 +116,88 @@ function Donations:ProcessTransactionLog()
     end
 end
 
+-- ── Goal broadcast ───────────────────────────────────────────────────────────
+
+-- Serialize targetRanks ({[0]=true,[2]=true}) → "0,2"
+local function _SerializeRanks(targetRanks)
+    local parts = {}
+    for idx in pairs(targetRanks) do
+        if targetRanks[idx] then
+            parts[#parts + 1] = tostring(idx)
+        end
+    end
+    table.sort(parts)
+    return table.concat(parts, ",")
+end
+
+-- Deserialize "0,2" → {[0]=true,[2]=true}
+local function _DeserializeRanks(str)
+    local ranks = {}
+    for idx in str:gmatch("(%d+)") do
+        ranks[tonumber(idx)] = true
+    end
+    return ranks
+end
+
+-- Broadcast the active goal to the guild so all clients can store it.
+-- Called when a goal is created and on officer login.
+function Donations:BroadcastGoal(goal)
+    if not goal then return end
+    local ranks = _SerializeRanks(goal.targetRanks)
+    local msg = string.format("GOAL_UPDATE|%d|%d|%s|%s|%s|%d",
+        goal.id, goal.goldAmount, goal.period,
+        goal.createdBy or "Unknown", ranks, goal.startEpoch or 0)
+    GM:SendCommMessage("GuildMate", msg, "GUILD")
+end
+
 -- ── Comm handler ─────────────────────────────────────────────────────────────
 
 function Donations:OnCommReceived(message)
-    -- DONATION_TOTAL carries the sender's known running total for a member+period.
-    -- We take max(ours, theirs) — safe to receive multiple times.
-    local cmd, memberKey, periodKey, totalStr = message:match("^(%w+)|(.+)|(.+)|(%d+)$")
+    local cmd = message:match("^(%w+)")
 
     if cmd == "DONATION_TOTAL" then
+        -- DONATION_TOTAL|memberKey|periodKey|total
+        local _, memberKey, periodKey, totalStr = message:match("^(%w+)|(.+)|(.+)|(%d+)$")
         local total = tonumber(totalStr)
         if memberKey and periodKey and total then
             GM.DB:SetDonationTotal(memberKey, periodKey, total)
             GM.MainFrame:RefreshActiveView()
         end
+
     elseif cmd == "GOAL_UPDATE" then
-        -- Future: deserialise and store updated goal from officer
+        -- GOAL_UPDATE|id|goldAmount|period|createdBy|ranks|startEpoch
+        local _, idStr, amountStr, period, createdBy, ranksStr, epochStr =
+            message:match("^(%w+)|(%d+)|(%d+)|(%w+)|([^|]+)|([%d,]+)|(%d+)$")
+
+        local id        = tonumber(idStr)
+        local amount    = tonumber(amountStr)
+        local epoch     = tonumber(epochStr)
+
+        if id and amount and period then
+            local existing = GM.DB:GetActiveGoal()
+            -- Accept if we have no goal, or the incoming goal is newer
+            if not existing or (epoch and epoch > (existing.startEpoch or 0))
+                            or (id and id > (existing.id or 0)) then
+                local goal = {
+                    id          = id,
+                    goldAmount  = amount,
+                    period      = period,
+                    targetRanks = _DeserializeRanks(ranksStr or ""),
+                    active      = true,
+                    createdBy   = createdBy or "Unknown",
+                    startEpoch  = epoch or 0,
+                }
+                GM.DB:DeactivateAllGoals()
+                GM.DB:SaveGoal(goal)
+                GM.MainFrame:RefreshActiveView()
+            end
+        end
     end
 end
 
 -- ── Reminder helpers ──────────────────────────────────────────────────────────
 
--- Whisper everyone in the target rank list who hasn't met the goal this period
+-- Whisper all online members in the target rank list who haven't met the goal
 function Donations:RemindIncomplete()
     local goal = GM.DB:GetActiveGoal()
     if not goal then
@@ -135,25 +206,28 @@ function Donations:RemindIncomplete()
     end
 
     local periodKey = Utils.PeriodKey(time(), goal.period)
-    local msg = GM.DB:GetSetting("reminderMessage")
+    local playerName = UnitName("player") or ""
 
     local count = 0
     for key, info in pairs(_roster) do
-        if goal.targetRanks[info.rankIndex] then
+        if info.online and goal.targetRanks[info.rankIndex]
+           and info.name ~= playerName then
             local donated = GM.DB:GetDonated(key, periodKey)
             if donated < goal.goldAmount then
-                local whisper = msg
-                whisper = whisper:gsub("%%s", info.name)
-                whisper = whisper:gsub("%%g", Utils.FormatMoneyShort(goal.goldAmount))
-                whisper = whisper:gsub("%%p", goal.period)
-                whisper = whisper:gsub("%%d", Utils.FormatMoneyShort(donated))
+                local remaining = goal.goldAmount - donated
+                local whisper = string.format(
+                    "[GuildMate] Hi %s! Don't forget the %s guild donation goal of %s. You've donated %s so far (%s remaining).",
+                    info.name, goal.period,
+                    Utils.FormatMoneyShort(goal.goldAmount),
+                    Utils.FormatMoneyShort(donated),
+                    Utils.FormatMoneyShort(remaining))
                 SendChatMessage(whisper, "WHISPER", nil, info.name)
                 count = count + 1
             end
         end
     end
 
-    GM:Print(string.format("|cff4A90D9GuildMate:|r Sent reminders to %d member(s).", count))
+    GM:Print(string.format("|cff4A90D9GuildMate:|r Sent reminders to %d online member(s).", count))
 end
 
 -- Post a progress summary to the configured channel

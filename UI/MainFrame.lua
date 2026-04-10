@@ -33,7 +33,14 @@ function MainFrame:Build()
     -- ── Outer AceGUI frame ────────────────────────────────────────────────────
     local f = AceGUI:Create("Frame")
     f:SetTitle("|cff4A90D9Guild|rMate")
-    f:SetStatusText("GuildMate v" .. (GM.version or "0.1.0") .. "  ·  TBC Anniversary")
+    f:SetStatusText("GuildMate v" .. (GM.version or "0.1.0") .. " by |cffffffffNypp|r |TInterface\\Icons\\INV_Drink_04:14|t")
+
+    -- Right-aligned tagline in the same status bar
+    local statusbg = f.statustext:GetParent()
+    local tagline = statusbg:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    tagline:SetPoint("RIGHT", statusbg, "RIGHT", -8, 0)
+    tagline:SetJustifyH("RIGHT")
+    tagline:SetText("|cffaaaaaaA |cffd4af37Must Have|cffaaaaaa Addon|r")
     f:SetWidth(db.windowWidth   or 900)
     f:SetHeight(db.windowHeight or 550)
     f:SetLayout("Fill")

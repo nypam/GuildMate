@@ -5,9 +5,6 @@ local GM = LibStub("AceAddon-3.0"):GetAddon("GuildMate") ---@type table
 local Events = {}
 GM.Events = Events
 
--- How long (seconds) to wait after the bank opens before reading transaction data.
-local LOG_READ_DELAY = 0.5
-
 -- Called from GM:OnEnable()
 function Events:Register()
     -- Guild roster refreshed
@@ -38,9 +35,14 @@ function Events:Register()
     end
     C_Timer.After(1, _PollForBankFrame)
 
-    -- Money balance changed while bank is open → re-read log
+    -- Money balance changed while bank is open → request fresh log
     pcall(function()
         GM:RegisterEvent("GUILDBANK_UPDATE_MONEY", Events.OnGuildBankMoneyUpdate)
+    end)
+
+    -- Log data arrived from the server → now safe to read transactions
+    pcall(function()
+        GM:RegisterEvent("GUILD_BANK_LOG_UPDATE", Events.OnGuildBankLogUpdate)
     end)
 end
 
@@ -49,40 +51,39 @@ end
 function Events.OnPlayerLogin()
     -- GUILD_ROSTER_UPDATE fires automatically on login in TBC Anniversary.
 
-    -- Auto-remind: whisper members who haven't donated this period.
-    C_Timer.After(5, function()
+    -- Re-broadcast the active goal so other guild members pick it up.
+    -- Delay 8s to let roster/comm settle before sending.
+    C_Timer.After(8, function()
+        local _, _, playerRankIndex = GetGuildInfo("player")
+        if not GM.DB:IsOfficerRank(playerRankIndex or 99) then return end
+
+        local goal = GM.DB:GetActiveGoal()
+        if goal and GM.Donations then
+            GM.Donations:BroadcastGoal(goal)
+        end
+    end)
+
+    -- Auto-remind: show a local reminder if this player hasn't met the goal.
+    -- Delay 10s so guild info and goal sync have time to settle.
+    C_Timer.After(10, function()
         if not GM.DB:GetSetting("reminderEnabled") then return end
 
         local goal = GM.DB:GetActiveGoal()
         if not goal then return end
 
-        local periodKey  = GM.Utils.PeriodKey(time(), goal.period)
         local playerName = UnitName("player") or ""
         local realm      = GetRealmName and GetRealmName() or ""
         local playerKey  = GM.Utils.MemberKey(playerName, realm)
+        local periodKey  = GM.Utils.PeriodKey(time(), goal.period)
+        local donated    = GM.DB:GetDonated(playerKey, periodKey)
 
-        -- Only officers send reminders
-        local _, _, playerRankIndex = GetGuildInfo("player")
-        if not GM.DB:IsOfficerRank(playerRankIndex or 99) then return end
-
-        local msg = GM.DB:GetSetting("reminderMessage") or
-            "Hi %s! Don't forget the %p guild donation goal of %g. You've donated %d so far."
-
-        local roster = GM.Donations and GM.Donations:GetRoster()
-        if not roster then return end
-
-        for key, info in pairs(roster) do
-            if goal.targetRanks[info.rankIndex] and key ~= playerKey then
-                local donated = GM.DB:GetDonated(key, periodKey)
-                if donated < goal.goldAmount and info.online then
-                    local text = msg
-                    text = text:gsub("%%s", info.name)
-                    text = text:gsub("%%g", GM.Utils.FormatMoneyShort(goal.goldAmount))
-                    text = text:gsub("%%p", goal.period)
-                    text = text:gsub("%%d", GM.Utils.FormatMoneyShort(donated))
-                    SendChatMessage(text, "WHISPER", nil, info.name)
-                end
-            end
+        if donated < goal.goldAmount then
+            local remaining = goal.goldAmount - donated
+            GM:Print(string.format(
+                "|cffd9a400Reminder:|r You still need to donate %s to meet the %s goal of %s.",
+                GM.Utils.FormatMoneyShort(remaining),
+                goal.period,
+                GM.Utils.FormatMoneyShort(goal.goldAmount)))
         end
     end)
 end
@@ -96,14 +97,29 @@ function Events.OnGuildRosterUpdate()
     end
 end
 
+-- Request the money log from the server. The money tab is one past the item tabs.
+local function _RequestMoneyLog()
+    local moneyTab = (GUILD_BANK_MAX_TABS or 6) + 1
+    if QueryGuildBankLog then
+        QueryGuildBankLog(moneyTab)
+    end
+end
+
+-- Try to read the log. Called from events and timer fallbacks.
+local function _TryProcessLog()
+    if GM.Events._bankOpen and GM.Donations and GM.Donations.ProcessTransactionLog then
+        GM.Donations:ProcessTransactionLog()
+    end
+end
+
 function Events.OnGuildBankOpened()
     if GM.Events._bankOpen then return end  -- guard against double-trigger
     GM.Events._bankOpen = true
-    C_Timer.After(LOG_READ_DELAY, function()
-        if GM.Events._bankOpen and GM.Donations and GM.Donations.ProcessTransactionLog then
-            GM.Donations:ProcessTransactionLog()
-        end
-    end)
+    -- Ask the server to send money log data
+    _RequestMoneyLog()
+    -- Timer fallback: GUILD_BANK_LOG_UPDATE may not fire in TBC Anniversary
+    C_Timer.After(1, _TryProcessLog)
+    C_Timer.After(3, _TryProcessLog)
 end
 
 function Events.OnGuildBankClosed()
@@ -112,10 +128,13 @@ end
 
 function Events.OnGuildBankMoneyUpdate()
     if GM.Events._bankOpen then
-        C_Timer.After(LOG_READ_DELAY, function()
-            if GM.Events._bankOpen and GM.Donations and GM.Donations.ProcessTransactionLog then
-                GM.Donations:ProcessTransactionLog()
-            end
-        end)
+        _RequestMoneyLog()
+        -- Timer fallback in case the log update event doesn't fire
+        C_Timer.After(1, _TryProcessLog)
+        C_Timer.After(3, _TryProcessLog)
     end
+end
+
+function Events.OnGuildBankLogUpdate()
+    _TryProcessLog()
 end
