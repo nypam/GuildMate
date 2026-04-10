@@ -1,0 +1,23 @@
+## Interface: 20504
+## Title: |cff4A90D9Guild|rMate
+## Notes: Guild management tools — Donation tracking and more
+## Author: guildMate
+## Version: 0.1.0
+## SavedVariables: GuildMateDB
+## X-Category: Guild
+
+embeds.xml
+
+guildMate.lua
+
+Core\Database.lua
+Core\Utils.lua
+Core\Events.lua
+
+UI\MainFrame.lua
+
+Modules\Donations\DonationCore.lua
+Modules\Donations\GoalEditor.lua
+Modules\Donations\OfficerView.lua
+Modules\Donations\MemberView.lua
+Modules\Donations\SettingsView.lua

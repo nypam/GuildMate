@@ -1,0 +1,25 @@
+{
+  "diagnostics": {
+    "globals": [
+      "LibStub",
+      "time", "date", "wipe",
+      "GetTime", "GetServerTime",
+      "UnitName", "UnitClass", "UnitIsPlayer",
+      "GetGuildInfo", "GuildRoster", "GetNumGuildMembers", "GetGuildRosterInfo",
+      "GuildControlGetNumRanks", "GuildControlGetRankName",
+      "CanEditOfficerNote", "IsGuildLeader",
+      "GetGuildBankMoney", "QueryGuildBankLog", "GetGuildBankTransactionInfo",
+      "SendAddonMessage", "SendChatMessage",
+      "IsInGuild",
+      "C_Timer",
+      "GetRealmName",
+      "GameFontNormal", "GameFontHighlight", "GameFontDisable",
+      "GameFontNormalSmall", "GameFontHighlightSmall",
+      "GuildControlGetNumRanks", "GuildControlGetRankName",
+      "GameTooltip", "UIParent",
+      "PlaySound",
+      "GUILD_BANK_MAX_TABS",
+      "C_GuildInfo"
+    ]
+  }
+}
