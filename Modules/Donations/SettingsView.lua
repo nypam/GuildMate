@@ -1,198 +1,137 @@
 -- GuildMate: Settings panel
--- Rendered inside the main content area when the officer clicks ⚙.
+-- Raw WoW frames, no AceGUI.
 
 local GM = LibStub("AceAddon-3.0"):GetAddon("GuildMate") ---@type table
-local AceGUI = LibStub("AceGUI-3.0")
-local Utils  = GM.Utils
+local Utils = GM.Utils
 
 local SettingsView = {}
 GM.SettingsView = SettingsView
 
--- ── Constants ─────────────────────────────────────────────────────────────────
+-- ── Public API ───────────────────────────────────────────────────────────────
 
-local COLOR_HEADER = { 0.85, 0.85, 0.95 }
+-- Render settings. `onBack` is called when the user clicks Back.
+function SettingsView:Render(onBack)
+    local parent = GM.MainFrame:ClearContent()
+    local L = Utils.LayoutBuilder(parent)
 
--- ── Public API ────────────────────────────────────────────────────────────────
+    -- ── Title row ────────────────────────────────────────────────────────────
+    local headerRow = L:AddRow(32)
 
--- Render into `container`; `onBack` is called when the user clicks Back.
-function SettingsView:Render(container, onBack)
-    container:ReleaseChildren()
-    container:SetLayout("Fill")
-
-    local scroll = AceGUI:Create("ScrollFrame")
-    scroll:SetLayout("List")
-    scroll:SetFullWidth(true)
-    scroll:SetFullHeight(true)
-    container:AddChild(scroll)
-
-    -- ── Title row ─────────────────────────────────────────────────────────────
-    local titleRow = AceGUI:Create("SimpleGroup")
-    titleRow:SetLayout("Flow")
-    titleRow:SetFullWidth(true)
-    scroll:AddChild(titleRow)
-
-    local backBtn = AceGUI:Create("Button")
-    backBtn:SetText("← Back")
-    backBtn:SetWidth(90)
-    backBtn:SetCallback("OnClick", function()
+    local backBtn = CreateFrame("Button", nil, headerRow, "UIPanelButtonTemplate")
+    backBtn:SetSize(80, 24)
+    backBtn:SetPoint("LEFT", headerRow, "LEFT", 0, 0)
+    backBtn:SetText("Back")
+    backBtn:SetScript("OnClick", function()
         PlaySound(856)
         if onBack then onBack() end
     end)
-    titleRow:AddChild(backBtn)
 
-    local title = AceGUI:Create("Label")
-    title:SetText("  |cff4A90D9SETTINGS|r")
-    title:SetFont(Utils.Font(GameFontHighlight, 16))
-    title:SetRelativeWidth(0.8)
-    scroll:AddChild(title)  -- full-width below the row looks better
+    local titleFs = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    titleFs:SetFont(Utils.Font(GameFontHighlight, 16))
+    titleFs:SetPoint("LEFT", backBtn, "RIGHT", 10, 0)
+    titleFs:SetText("|cff4A90D9SETTINGS|r")
 
-    self:_AddSpacer(scroll, 8)
+    L:AddSpacer(8)
 
-    -- Check if the current player is an officer
+    -- Check if officer
     local _, _, playerRankIndex = GetGuildInfo("player")
     local isOfficer = GM.debugOfficer or GM.DB:IsOfficerRank(playerRankIndex or 99)
 
-    -- ── Officer-only settings ─────────────────────────────────────────────────
+    -- ── Officer-only settings ────────────────────────────────────────────────
     if isOfficer then
-        -- ── Officer Ranks ─────────────────────────────────────────────────────
-        self:_SectionHeader(scroll, "Officer Ranks")
-
-        local rankDesc = AceGUI:Create("Label")
-        rankDesc:SetText("|cffaaaaaaMembers with these ranks see the full roster and can manage goals.|r")
-        rankDesc:SetFullWidth(true)
-        rankDesc:SetHeight(18)
-        scroll:AddChild(rankDesc)
-
-        self:_AddSpacer(scroll, 8)
-
-        local rankBox = AceGUI:Create("SimpleGroup")
-        rankBox:SetLayout("Flow")
-        rankBox:SetFullWidth(true)
-        scroll:AddChild(rankBox)
+        -- Goal Management
+        L:AddHeader("Goal Management")
+        L:AddSpacer(2)
+        L:AddText("|cffaaaaaaRanks that can create, edit and delete donation goals.|r", 11)
+        L:AddSpacer(6)
 
         local numRanks = GuildControlGetNumRanks and GuildControlGetNumRanks() or 0
         for i = 0, numRanks - 1 do
             local rankName = (GuildControlGetRankName and GuildControlGetRankName(i + 1)) or ("Rank " .. i)
-            local cb = AceGUI:Create("CheckBox")
-            cb:SetLabel("  " .. rankName)
-            cb:SetValue(GM.DB:IsOfficerRank(i))
-            cb:SetWidth(180)
+            local cb = L:AddCheckbox(rankName, GM.DB:IsOfficerRank(i))
             if i == 0 then
-                cb:SetDisabled(true)
+                cb:Disable()
+                if cb._label then cb._label:SetTextColor(0.5, 0.5, 0.5) end
             else
                 local idx = i
-                cb:SetCallback("OnValueChanged", function(_, _, val)
-                    local ranks = GM.DB.sv.settings.officerRanks
-                    ranks[idx] = val or nil
+                cb:SetScript("OnClick", function(self)
+                    GM.DB.sv.settings.officerRanks[idx] = self:GetChecked() or nil
                     PlaySound(856)
                 end)
             end
-            rankBox:AddChild(cb)
         end
 
-        self:_AddSpacer(scroll, 14)
+        L:AddSpacer(14)
 
-        -- ── Announce Channel ──────────────────────────────────────────────────
-        self:_SectionHeader(scroll, "Announce Channel")
-
-        local chanDesc = AceGUI:Create("Label")
-        chanDesc:SetText("|cffaaaaaaWhere to post progress summaries when you click \"Announce to Guild\".|r")
-        chanDesc:SetFullWidth(true)
-        scroll:AddChild(chanDesc)
-
-        self:_AddSpacer(scroll, 4)
-
-        local chanGroup = AceGUI:Create("SimpleGroup")
-        chanGroup:SetLayout("Flow")
-        chanGroup:SetFullWidth(true)
-        scroll:AddChild(chanGroup)
+        -- Announce Channel
+        L:AddHeader("Announce Channel")
+        L:AddSpacer(2)
+        L:AddText("|cffaaaaaaWhere to post progress summaries when you click \"Announce to Guild\".|r", 11)
+        L:AddSpacer(6)
 
         local channels = {
             { value = "GUILD",   label = "Guild Chat"   },
-            { value = "OFFICER", label = "Officer Chat" },
-            { value = "OFF",     label = "Off"          },
+            { value = "OFFICER", label = "Officer Chat"  },
+            { value = "OFF",     label = "Off"           },
         }
-
-        local btns = {}
         local currentChan = GM.DB:GetSetting("announceChannel") or "GUILD"
+        local chanBtns = {}
 
+        local chanRow = L:AddRow(28)
+        local cx = 0
         for _, ch in ipairs(channels) do
-            local btn = AceGUI:Create("CheckBox")
-            btn:SetLabel("  " .. ch.label)
-            btn:SetType("radio")
-            btn:SetValue(currentChan == ch.value)
-            btn:SetWidth(150)
+            local cb = CreateFrame("CheckButton", nil, chanRow, "UICheckButtonTemplate")
+            cb:SetSize(24, 24)
+            cb:SetPoint("LEFT", chanRow, "LEFT", cx, 0)
+            cb:SetChecked(currentChan == ch.value)
+            local lbl = cb:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            lbl:SetPoint("LEFT", cb, "RIGHT", 4, 0)
+            lbl:SetText(ch.label)
             local chValue = ch.value
-            btn:SetCallback("OnValueChanged", function(_, _, val)
-                if val then
-                    GM.DB:SetSetting("announceChannel", chValue)
-                    for _, other in ipairs(btns) do
-                        if other ~= btn then other:SetValue(false) end
-                    end
-                    PlaySound(856)
+            cb:SetScript("OnClick", function()
+                GM.DB:SetSetting("announceChannel", chValue)
+                for _, other in ipairs(chanBtns) do
+                    other:SetChecked(other == cb)
                 end
+                PlaySound(856)
             end)
-            table.insert(btns, btn)
-            chanGroup:AddChild(btn)
+            chanBtns[#chanBtns + 1] = cb
+            cx = cx + 140
         end
 
-        self:_AddSpacer(scroll, 14)
+        L:AddSpacer(14)
     end
 
-    -- ── Settings visible to everyone ──────────────────────────────────────────
+    -- ── Settings visible to everyone ─────────────────────────────────────────
 
-    -- ── Login Reminder ──────────────────────────────────────────────────────
-    self:_SectionHeader(scroll, "Login Reminder")
-
-    local remindToggle = AceGUI:Create("CheckBox")
-    remindToggle:SetLabel("  Show a reminder on login if I haven't met the donation goal")
-    remindToggle:SetFullWidth(true)
-    remindToggle:SetValue(GM.DB:GetSetting("reminderEnabled"))
-    remindToggle:SetCallback("OnValueChanged", function(_, _, val)
-        GM.DB:SetSetting("reminderEnabled", val)
+    -- Login Reminder
+    L:AddHeader("Login Reminder")
+    L:AddSpacer(2)
+    local remindCb = L:AddCheckbox(
+        "Show a reminder on login if I haven't met the donation goal",
+        GM.DB:GetSetting("reminderEnabled"))
+    remindCb:SetScript("OnClick", function(self)
+        GM.DB:SetSetting("reminderEnabled", self:GetChecked())
         PlaySound(856)
     end)
-    scroll:AddChild(remindToggle)
 
-    self:_AddSpacer(scroll, 14)
+    L:AddSpacer(14)
 
-    -- ── Goal Met Announcement ─────────────────────────────────────────────────
-    self:_SectionHeader(scroll, "Goal Met Announcement")
-
-    local goalMetToggle = AceGUI:Create("CheckBox")
-    goalMetToggle:SetLabel("  Announce in guild chat when a member meets the donation goal")
-    goalMetToggle:SetFullWidth(true)
-    goalMetToggle:SetValue(GM.DB:GetSetting("goalMetAnnounce"))
-    goalMetToggle:SetCallback("OnValueChanged", function(_, _, val)
-        GM.DB:SetSetting("goalMetAnnounce", val)
+    -- Goal Met Announcement
+    L:AddHeader("Goal Met Announcement")
+    L:AddSpacer(2)
+    local goalMetCb = L:AddCheckbox(
+        "Announce in guild chat when a member meets the donation goal",
+        GM.DB:GetSetting("goalMetAnnounce"))
+    goalMetCb:SetScript("OnClick", function(self)
+        GM.DB:SetSetting("goalMetAnnounce", self:GetChecked())
         PlaySound(856)
     end)
-    scroll:AddChild(goalMetToggle)
 
-    self:_AddSpacer(scroll, 20)
+    L:AddSpacer(20)
 
-    -- ── Save note ─────────────────────────────────────────────────────────────
-    local note = AceGUI:Create("Label")
-    note:SetText("|cffaaaaaa Settings are saved automatically and persist across sessions.|r")
-    note:SetFullWidth(true)
-    scroll:AddChild(note)
-end
+    -- Save note
+    L:AddText("|cffaaaaaa Settings are saved automatically and persist across sessions.|r", 11)
 
--- ── Helpers ───────────────────────────────────────────────────────────────────
-
-function SettingsView:_SectionHeader(container, text)
-    local lbl = AceGUI:Create("Label")
-    lbl:SetText("|cffd4af37" .. text .. "|r")
-    lbl:SetFont(Utils.Font(GameFontHighlight, 13))
-    lbl:SetFullWidth(true)
-    container:AddChild(lbl)
-    self:_AddSpacer(container, 2)
-end
-
-function SettingsView:_AddSpacer(container, height)
-    local sp = AceGUI:Create("Label")
-    sp:SetText(" ")
-    sp:SetFullWidth(true)
-    sp:SetHeight(height or 8)
-    container:AddChild(sp)
+    L:Finish()
 end

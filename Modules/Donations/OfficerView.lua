@@ -1,232 +1,283 @@
 -- GuildMate: Officer donation view
--- Renders the full member roster with donation status for officers/GL.
+-- Full member roster with donation status — raw WoW frames, no AceGUI.
 
 local GM = LibStub("AceAddon-3.0"):GetAddon("GuildMate") ---@type table
-local AceGUI = LibStub("AceGUI-3.0")
-local Utils  = GM.Utils
+local Utils = GM.Utils
 
 local OfficerView = {}
 GM.OfficerView = OfficerView
 
--- ── Visual constants ──────────────────────────────────────────────────────────
+-- ── Visual constants ─────────────────────────────────────────────────────────
 
-local COLOR_ACCENT  = { 0.055, 0.306, 0.576 }
-local FILL_OPACITY  = 0.30
-local HOVER_MULT    = 1.25
+local ROW_HEIGHT    = 32
+local CONTAINER_PAD = 10
+local BORDER_COLOR  = { 0.3, 0.3, 0.3, 0.4 }
+local CONTAINER_BG  = { 0.055, 0.306, 0.576, 0.12 }
 
--- Roster filter state (persists across re-renders within the session)
+-- Paint a bordered container background on `parent` spanning from startY to current L:GetY()
+local function _PaintContainer(L, parent, startY)
+    local h = L:GetY() - startY
+    local bg = CreateFrame("Frame", nil, parent)
+    bg:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -startY)
+    bg:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
+    bg:SetHeight(h)
+    bg:SetFrameLevel(parent:GetFrameLevel())
+    Utils.SetFrameColor(bg, CONTAINER_BG[1], CONTAINER_BG[2], CONTAINER_BG[3], CONTAINER_BG[4])
+
+    local function Edge(p1, r1, p2, r2, w, h)
+        local t = bg:CreateTexture(nil, "BORDER")
+        t:SetPoint(p1, bg, r1)
+        t:SetPoint(p2, bg, r2)
+        if w then t:SetWidth(w) end
+        if h then t:SetHeight(h) end
+        t:SetColorTexture(BORDER_COLOR[1], BORDER_COLOR[2], BORDER_COLOR[3], BORDER_COLOR[4])
+    end
+    Edge("TOPLEFT", "TOPLEFT", "TOPRIGHT", "TOPRIGHT", nil, 1)
+    Edge("BOTTOMLEFT", "BOTTOMLEFT", "BOTTOMRIGHT", "BOTTOMRIGHT", nil, 1)
+    Edge("TOPLEFT", "TOPLEFT", "BOTTOMLEFT", "BOTTOMLEFT", 1, nil)
+    Edge("TOPRIGHT", "TOPRIGHT", "BOTTOMRIGHT", "BOTTOMRIGHT", 1, nil)
+
+    return bg
+end
+
+-- Roster filter state (persists within session)
 local _filters = { paid = true, partial = true, unpaid = true }
+local _searchText = ""
+local _activeTab = "roster"  -- "roster" or "logs"
 
--- ── Render ────────────────────────────────────────────────────────────────────
+-- ── Render ───────────────────────────────────────────────────────────────────
 
-function OfficerView:Render(container)
-    container:ReleaseChildren()
-    container:SetLayout("List")
+function OfficerView:Render()
+    local parent = GM.MainFrame:ClearContent()
+    local L = Utils.LayoutBuilder(parent)
 
     local goal      = GM.DB:GetActiveGoal()
     local periodKey = goal and Utils.PeriodKey(time(), goal.period) or nil
 
-    -- ── Header bar ────────────────────────────────────────────────────────────
-    self:_RenderHeader(container, container, periodKey)
+    -- ── Header row ───────────────────────────────────────────────────────────
+    local headerRow = L:AddRow(24)
 
-    -- ── Goal card ─────────────────────────────────────────────────────────────
-    if goal then
-        self:_RenderGoalCard(container, container, goal, periodKey)
-    else
-        self:_RenderNoGoal(container)
-    end
+    local titleFs = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    titleFs:SetFont(Utils.Font(GameFontHighlight, 16))
+    titleFs:SetPoint("LEFT", headerRow, "LEFT", 0, 0)
+    titleFs:SetText("|cffffffffDONATIONS|r")
 
-    -- ── Action bar (above roster so it's always visible) ────────────────────
-    self:_RenderActionBar(container, goal)
-
-    -- ── Member roster (fills remaining height) ────────────────────────────────
-    -- Calculate how much vertical space the top elements used, then give
-    -- the roster box the rest. Defer one frame so AceGUI has laid out.
-    self:_RenderRoster(container, container, goal, periodKey)
-
-    C_Timer.After(0, function()
-        if not container.frame then return end
-        local containerHeight = container.frame:GetHeight()
-        local rosterFrame = self._rosterBox and self._rosterBox.frame
-        if rosterFrame then
-            local top = rosterFrame:GetTop()
-            local bottom = container.frame:GetBottom()
-            if top and bottom and top > bottom then
-                self._rosterBox:SetHeight(top - bottom - 4)
-            end
-        end
+    local settingsBtn = CreateFrame("Button", nil, headerRow, "UIPanelButtonTemplate")
+    settingsBtn:SetSize(30, 24)
+    settingsBtn:SetPoint("RIGHT", headerRow, "RIGHT", 0, 0)
+    settingsBtn:SetText("")
+    local cogIcon = settingsBtn:CreateTexture(nil, "OVERLAY")
+    cogIcon:SetSize(16, 16)
+    cogIcon:SetPoint("CENTER")
+    cogIcon:SetTexture("Interface\\Scenarios\\ScenarioIcon-Interact")
+    settingsBtn:SetScript("OnClick", function()
+        PlaySound(856)
+        GM.SettingsView:Render(function() OfficerView:Render() end)
     end)
-end
+    settingsBtn:SetScript("OnEnter", function(btn)
+        GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Settings")
+        GameTooltip:Show()
+    end)
+    settingsBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
--- ── Header ────────────────────────────────────────────────────────────────────
-
-function OfficerView:_RenderHeader(container, outerContainer, periodKey)
-    local headerGroup = AceGUI:Create("SimpleGroup")
-    headerGroup:SetLayout("Flow")
-    headerGroup:SetFullWidth(true)
-    headerGroup:SetHeight(36)
-    container:AddChild(headerGroup)
-
-    local title = AceGUI:Create("Label")
-    title:SetText("|cff4A90D9DONATIONS|r  " ..
-        (periodKey and ("|cffaaaaaa" .. Utils.PeriodLabel(periodKey) .. "|r") or ""))
-    title:SetFont(Utils.Font(GameFontHighlight, 16))
-    title:SetRelativeWidth(0.7)
-    headerGroup:AddChild(title)
-
-    -- "New Goal" button top-right
-    local newGoalBtn = AceGUI:Create("Button")
+    local newGoalBtn = CreateFrame("Button", nil, headerRow, "UIPanelButtonTemplate")
+    newGoalBtn:SetSize(110, 24)
+    newGoalBtn:SetPoint("RIGHT", settingsBtn, "LEFT", -6, 0)
     newGoalBtn:SetText("+ New Goal")
-    newGoalBtn:SetWidth(110)
-    newGoalBtn:SetCallback("OnClick", function()
+    newGoalBtn:SetScript("OnClick", function()
         PlaySound(856)
-        GM.GoalEditor:Open(outerContainer,
-            nil,
-            function() OfficerView:Render(outerContainer) end,
-            function() OfficerView:Render(outerContainer) end)
+        GM.GoalEditor:Open(nil,
+            function() OfficerView:Render() end,
+            function() OfficerView:Render() end)
     end)
-    headerGroup:AddChild(newGoalBtn)
 
-    -- Settings button
-    local settingsBtn = AceGUI:Create("Button")
-    settingsBtn:SetText("⚙")
-    settingsBtn:SetWidth(38)
-    settingsBtn:SetCallback("OnClick", function()
-        PlaySound(856)
-        GM.SettingsView:Render(outerContainer, function()
-            OfficerView:Render(outerContainer)
+    -- Addon user count
+    local addonUsers = GM.Donations:GetAddonUsers()
+    local addonCount = 0
+    for _ in pairs(addonUsers) do addonCount = addonCount + 1 end
+    if addonCount > 0 then
+        local addonFs = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        addonFs:SetPoint("RIGHT", newGoalBtn, "LEFT", -10, 0)
+        addonFs:SetText("|TInterface\\Icons\\INV_Misc_Orb_03:12:12|t |cffaaaaaa" .. addonCount .. " member" .. (addonCount == 1 and "" or "s") .. " with addon|r")
+    end
+
+    -- Period line (below title)
+    if periodKey then
+        L:AddText("|cffaaaaaa" .. Utils.PeriodLabel(periodKey) .. "|r", 11)
+    end
+
+    -- ── Goal card ────────────────────────────────────────────────────────────
+    if goal then
+        self:_RenderGoalCard(L, parent, goal, periodKey)
+    else
+        L:AddSpacer(4)
+        L:AddText("|cffaaaaaa No active donation goal. Click |r|cffffd700+ New Goal|r|cffaaaaaa to create one.|r", 12)
+    end
+
+    L:AddSpacer(8)
+
+    -- ── Tools container ──────────────────────────────────────────────────────
+    local toolsStartY = L:GetY()
+    L:SetMargins(CONTAINER_PAD, CONTAINER_PAD)
+    L:AddSpacer(CONTAINER_PAD)
+    L:AddText("|cffccccccTOOLS|r", 12, GameFontHighlight)
+    L:AddSpacer(4)
+    self:_RenderActionBar(L, parent, goal)
+    L:AddSpacer(CONTAINER_PAD)
+    L:SetMargins(0, 0)
+    _PaintContainer(L, parent, toolsStartY)
+
+    L:AddSpacer(8)
+
+    -- ── Container with tabs inside ─────────────────────────────────────────
+    local contentStartY = L:GetY()
+    L:SetMargins(CONTAINER_PAD, CONTAINER_PAD)
+    L:AddSpacer(CONTAINER_PAD)
+
+    -- Tab bar
+    local tabRow = L:AddRow(28)
+
+    local function MakeTab(text, tabKey, xOff)
+        local isActive = (_activeTab == tabKey)
+        local btn = CreateFrame("Button", nil, tabRow)
+        btn:SetHeight(26)
+        btn:SetPoint("LEFT", tabRow, "LEFT", xOff, 0)
+
+        -- Background
+        local bg = btn:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        bg:SetTexture("Interface\\Buttons\\WHITE8X8")
+        if isActive then
+            bg:SetVertexColor(0.2, 0.35, 0.5, 0.6)
+        else
+            bg:SetVertexColor(0.15, 0.15, 0.15, 0.4)
+        end
+
+        local label = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        label:SetPoint("CENTER", btn, "CENTER", 0, 0)
+        if isActive then
+            label:SetText("|cffffffff" .. text .. "|r")
+        else
+            label:SetText("|cff888888" .. text .. "|r")
+        end
+        btn:SetWidth(label:GetStringWidth() + 20)
+
+        -- Bottom accent line for active tab
+        if isActive then
+            local accent = btn:CreateTexture(nil, "OVERLAY")
+            accent:SetHeight(2)
+            accent:SetPoint("BOTTOMLEFT", btn, "BOTTOMLEFT", 0, 0)
+            accent:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 0, 0)
+            accent:SetColorTexture(0.29, 0.56, 0.85, 1)
+        end
+
+        -- Hover
+        btn:SetScript("OnEnter", function()
+            if not isActive then bg:SetVertexColor(0.2, 0.2, 0.2, 0.5) end
         end)
-    end)
-    headerGroup:AddChild(settingsBtn)
-end
+        btn:SetScript("OnLeave", function()
+            if not isActive then bg:SetVertexColor(0.15, 0.15, 0.15, 0.4) end
+        end)
 
--- ── Goal card ─────────────────────────────────────────────────────────────────
+        btn:SetScript("OnClick", function()
+            PlaySound(856)
+            _activeTab = tabKey
+            OfficerView:Render()
+        end)
 
-function OfficerView:_RenderGoalCard(container, outerContainer, goal, periodKey)
-    local card = AceGUI:Create("InlineGroup")
-    card:SetTitle("")
-    card:SetLayout("List")
-    card:SetFullWidth(true)
-    container:AddChild(card)
-
-    Utils.SetFrameColor(card.frame, COLOR_ACCENT[1], COLOR_ACCENT[2], COLOR_ACCENT[3], 0.12, card)
-
-    -- Goal summary line
-    local numRanks   = GuildControlGetNumRanks and GuildControlGetNumRanks() or 0
-    local rankNames  = {}
-    for i = 0, numRanks - 1 do
-        if goal.targetRanks[i] then
-            rankNames[#rankNames + 1] = GuildControlGetRankName and GuildControlGetRankName(i + 1) or ("Rank "..i)
-        end
+        return btn
     end
 
-    local summaryLine = AceGUI:Create("Label")
-    summaryLine:SetText(string.format(
-        "|cffd4af37%s|r per member  ·  %s  ·  Ranks: %s",
-        Utils.FormatMoneyShort(goal.goldAmount),
-        goal.period:gsub("^%l", string.upper),
-        #rankNames > 0 and table.concat(rankNames, ", ") or "None"))
-    summaryLine:SetFullWidth(true)
-    summaryLine:SetHeight(20)
-    card:AddChild(summaryLine)
+    MakeTab("Member Status", "roster", 0)
+    MakeTab("Logs", "logs", 130)
 
-    -- Time remaining
-    local secsLeft = Utils.SecondsRemainingInPeriod(goal.period)
-    local daysLeft = math.floor(secsLeft / 86400)
-    local timeLabel = AceGUI:Create("Label")
-    timeLabel:SetText(string.format("|cffaaaaaa%s · %d day%s remaining|r",
-        Utils.PeriodLabel(periodKey), daysLeft, daysLeft == 1 and "" or "s"))
-    timeLabel:SetFullWidth(true)
-    timeLabel:SetHeight(20)
-    card:AddChild(timeLabel)
+    L:AddSpacer(8)
 
-    self:_AddSpacer(card, 4)
-
-    -- Overall progress bar (members who met goal / total targeted)
-    local roster   = GM.Donations:GetRoster()
-    local total, met = 0, 0
-    for key, info in pairs(roster) do
-        if goal.targetRanks[info.rankIndex] then
-            total = total + 1
-            local donated = GM.DB:GetDonated(key, periodKey)
-            if donated >= goal.goldAmount then met = met + 1 end
-        end
+    -- Tab content
+    if _activeTab == "roster" then
+        self:_RenderRosterTab(L, parent, goal, periodKey)
+    else
+        self:_RenderLogsTab(L, parent)
     end
 
-    local frac = total > 0 and (met / total) or 0
-    local pct  = math.floor(frac * 100)
-    local goalColor = Utils.StatusColor(frac)
+    L:AddSpacer(CONTAINER_PAD)
+    L:SetMargins(0, 0)
+    _PaintContainer(L, parent, contentStartY)
 
-    local barText = string.format("%d / %d members met goal  (%d%%)", met, total, pct)
-    local barWidget = Utils.CreateProgressBar(barText, frac, goalColor[1], goalColor[2], goalColor[3])
-    card:AddChild(barWidget)
-
-    self:_AddSpacer(card, 4)
-
-    local editBtn = AceGUI:Create("Button")
-    editBtn:SetText("Edit Goal")
-    editBtn:SetWidth(100)
-    editBtn:SetCallback("OnClick", function()
-        PlaySound(856)
-        GM.GoalEditor:Open(outerContainer, goal,
-            function() OfficerView:Render(outerContainer) end,
-            function() OfficerView:Render(outerContainer) end)
-    end)
-    card:AddChild(editBtn)
+    L:Finish()
 end
 
-function OfficerView:_RenderNoGoal(container)
-    local notice = AceGUI:Create("Label")
-    notice:SetText("|cffaaaaaa No active donation goal. Click |r|cffffd700+ New Goal|r|cffaaaaaa to create one.|r")
-    notice:SetFullWidth(true)
-    container:AddChild(notice)
-end
+-- ── Roster tab ───────────────────────────────────────────────────────────────
 
--- ── Roster ────────────────────────────────────────────────────────────────────
-
-function OfficerView:_RenderRoster(outerContainer, container, goal, periodKey)
-    -- Wrap the roster in an InlineGroup (same style as the goal card)
-    local rosterBox = AceGUI:Create("InlineGroup")
-    rosterBox:SetTitle("|cffccccccMEMBER STATUS|r")
-    rosterBox:SetLayout("Fill")
-    rosterBox:SetFullWidth(true)
-    container:AddChild(rosterBox)
-    self._rosterBox = rosterBox
-
-    -- Scrollable content inside the roster box
-    local rosterScroll = AceGUI:Create("ScrollFrame")
-    rosterScroll:SetLayout("List")
-    rosterScroll:SetFullWidth(true)
-    rosterScroll:SetFullHeight(true)
-    rosterBox:AddChild(rosterScroll)
-
-    -- Filter checkboxes
-    local filterGroup = AceGUI:Create("SimpleGroup")
-    filterGroup:SetLayout("Flow")
-    filterGroup:SetFullWidth(true)
-    rosterScroll:AddChild(filterGroup)
-
+function OfficerView:_RenderRosterTab(L, parent, goal, periodKey)
+    -- Filters
+    local filterRow = L:AddRow(26)
     local filterDefs = {
-        { key = "unpaid",  label = "|cff8e0e13Unpaid|r",          color = {0.557, 0.055, 0.075} },
-        { key = "partial", label = "|cffd9a400Partially Paid|r",  color = {0.851, 0.608, 0.0}   },
-        { key = "paid",    label = "|cff5fba47Paid|r",            color = {0.373, 0.729, 0.275} },
+        { key = "unpaid",  label = "Unpaid",          color = {0.557, 0.055, 0.075} },
+        { key = "partial", label = "Partially Paid",  color = {0.851, 0.608, 0.0}   },
+        { key = "paid",    label = "Paid",            color = {0.373, 0.729, 0.275} },
     }
-
+    local fx = 0
     for _, def in ipairs(filterDefs) do
-        local cb = AceGUI:Create("CheckBox")
-        cb:SetLabel(def.label)
-        cb:SetValue(_filters[def.key])
-        cb:SetWidth(140)
-        local filterKey = def.key
-        cb:SetCallback("OnValueChanged", function(_, _, val)
-            _filters[filterKey] = val
-            -- Re-render the whole view to apply the filter
-            OfficerView:Render(outerContainer)
+        local cb = CreateFrame("CheckButton", nil, filterRow, "UICheckButtonTemplate")
+        cb:SetSize(20, 20)
+        cb:SetPoint("LEFT", filterRow, "LEFT", fx, 0)
+        cb:SetChecked(_filters[def.key])
+        local lbl = cb:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        lbl:SetPoint("LEFT", cb, "RIGHT", 2, 0)
+        local colorHex = string.format("|cff%02x%02x%02x", def.color[1]*255, def.color[2]*255, def.color[3]*255)
+        lbl:SetText(colorHex .. def.label .. "|r")
+        local fk = def.key
+        cb:SetScript("OnClick", function(self)
+            _filters[fk] = self:GetChecked()
+            OfficerView:Render()
         end)
-        filterGroup:AddChild(cb)
+        fx = fx + 130
     end
 
-    self:_AddSpacer(rosterScroll, 4)
+    -- Search field
+    local searchBox = CreateFrame("EditBox", "GuildMateSearchBox", filterRow, "InputBoxTemplate")
+    searchBox:SetSize(140, 20)
+    searchBox:SetPoint("RIGHT", filterRow, "RIGHT", -6, 0)
+    searchBox:SetTextInsets(4, 4, 0, 0)
+    searchBox:SetAutoFocus(false)
+    searchBox:EnableMouse(true)
+    searchBox:SetText(_searchText)
+    searchBox:SetCursorPosition(0)
+
+    local searchLabel = filterRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    searchLabel:SetPoint("RIGHT", searchBox, "LEFT", -8, 0)
+    searchLabel:SetText("|cffaaaaaaSearch:|r")
+
+    local searchTimer = nil
+    searchBox:SetScript("OnTextChanged", function(self, userInput)
+        if not userInput then return end
+        _searchText = self:GetText():lower()
+        if searchTimer then searchTimer:Cancel() end
+        searchTimer = C_Timer.NewTimer(0.3, function()
+            searchTimer = nil
+            OfficerView:Render()
+            C_Timer.After(0, function()
+                local box = _G["GuildMateSearchBox"]
+                if box then
+                    box:SetFocus()
+                    box:SetCursorPosition(#box:GetText())
+                end
+            end)
+        end)
+    end)
+    searchBox:SetScript("OnEscapePressed", function(self)
+        _searchText = ""
+        self:SetText("")
+        self:ClearFocus()
+        OfficerView:Render()
+    end)
+    searchBox:SetScript("OnEnterPressed", function(self)
+        self:ClearFocus()
+    end)
+
+    L:AddSpacer(4)
 
     -- Build sorted member list
     local roster = GM.Donations:GetRoster()
@@ -236,14 +287,14 @@ function OfficerView:_RenderRoster(outerContainer, container, goal, periodKey)
         local frac    = (goal and goal.goldAmount > 0) and (donated / goal.goldAmount) or 0
         local inScope = (not goal) or goal.targetRanks[info.rankIndex]
 
-        -- Apply filter
         local status
         if frac >= 1 then status = "paid"
         elseif frac > 0 then status = "partial"
-        else status = "unpaid"
-        end
+        else status = "unpaid" end
 
-        if inScope and _filters[status] then
+        local matchesSearch = (_searchText == "") or info.name:lower():find(_searchText, 1, true)
+
+        if inScope and _filters[status] and matchesSearch then
             rows[#rows + 1] = {
                 key           = key,
                 name          = info.name,
@@ -257,7 +308,6 @@ function OfficerView:_RenderRoster(outerContainer, container, goal, periodKey)
         end
     end
 
-    -- Sort: not-donated first, then partial, then met; alpha within groups
     table.sort(rows, function(a, b)
         local ag = a.frac >= 1 and 2 or (a.frac > 0 and 1 or 0)
         local bg = b.frac >= 1 and 2 or (b.frac > 0 and 1 or 0)
@@ -266,75 +316,373 @@ function OfficerView:_RenderRoster(outerContainer, container, goal, periodKey)
     end)
 
     if #rows == 0 then
-        local empty = AceGUI:Create("Label")
-        empty:SetText("|cffaaaaaa No members match the current filter.|r")
-        empty:SetFullWidth(true)
-        rosterScroll:AddChild(empty)
-        return
-    end
-
-    for _, row in ipairs(rows) do
-        self:_RenderMemberRow(rosterScroll, row)
+        L:AddText("|cffaaaaaa No members match the current filter.|r", 12)
+    else
+        for _, row in ipairs(rows) do
+            self:_RenderMemberRow(L, parent, row)
+        end
     end
 end
 
--- Row height for member rows
-local ROW_HEIGHT = 44
+-- ── Logs tab ─────────────────────────────────────────────────────────────────
 
-function OfficerView:_RenderMemberRow(container, row)
-    local color = Utils.StatusColor(row.frac)
+local _logSearchText = ""
+
+function OfficerView:_RenderLogsTab(L, parent)
+    -- Search field
+    local searchRow = L:AddRow(26)
+
+    local logSearchBox = CreateFrame("EditBox", "GuildMateLogSearchBox", searchRow, "InputBoxTemplate")
+    logSearchBox:SetSize(160, 20)
+    logSearchBox:SetPoint("RIGHT", searchRow, "RIGHT", -6, 0)
+    logSearchBox:SetTextInsets(4, 4, 0, 0)
+    logSearchBox:SetAutoFocus(false)
+    logSearchBox:EnableMouse(true)
+    logSearchBox:SetText(_logSearchText)
+    logSearchBox:SetCursorPosition(0)
+
+    local logSearchLabel = searchRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    logSearchLabel:SetPoint("RIGHT", logSearchBox, "LEFT", -8, 0)
+    logSearchLabel:SetText("|cffaaaaaaSearch:|r")
+
+    local logSearchTimer = nil
+    logSearchBox:SetScript("OnTextChanged", function(self, userInput)
+        if not userInput then return end
+        _logSearchText = self:GetText():lower()
+        if logSearchTimer then logSearchTimer:Cancel() end
+        logSearchTimer = C_Timer.NewTimer(0.3, function()
+            logSearchTimer = nil
+            OfficerView:Render()
+            C_Timer.After(0, function()
+                local box = _G["GuildMateLogSearchBox"]
+                if box then
+                    box:SetFocus()
+                    box:SetCursorPosition(#box:GetText())
+                end
+            end)
+        end)
+    end)
+    logSearchBox:SetScript("OnEscapePressed", function(self)
+        _logSearchText = ""
+        self:SetText("")
+        self:ClearFocus()
+        OfficerView:Render()
+    end)
+    logSearchBox:SetScript("OnEnterPressed", function(self)
+        self:ClearFocus()
+    end)
+
+    L:AddSpacer(6)
+
+    -- Collect all donations across all members and periods into a flat list
+    local entries = {}
+    local roster = GM.Donations:GetRoster()
+
+    for memberKey, rec in pairs(GM.DB.sv.donations) do
+        if rec and rec.records then
+            local info = roster[memberKey]
+            local name = info and info.name or memberKey
+            local classFilename = info and info.classFilename or "WARRIOR"
+
+            for periodKey, val in pairs(rec.records) do
+                local amt
+                if type(val) == "table" then
+                    amt = math.max(val.own or 0, val.synced or 0)
+                else
+                    amt = val
+                end
+                local matchesSearch = (_logSearchText == "") or name:lower():find(_logSearchText, 1, true)
+                if amt > 0 and matchesSearch then
+                    entries[#entries + 1] = {
+                        name          = name,
+                        memberKey     = memberKey,
+                        classFilename = classFilename,
+                        periodKey     = periodKey,
+                        amount        = amt,
+                    }
+                end
+            end
+        end
+    end
+
+    -- Sort: most recent period first, then by name within period
+    table.sort(entries, function(a, b)
+        if a.periodKey ~= b.periodKey then return a.periodKey > b.periodKey end
+        return a.name < b.name
+    end)
+
+    if #entries == 0 then
+        L:AddText("|cffaaaaaa No donation records found.|r", 12)
+        return
+    end
+
+    -- Render grouped by period
+    local lastPeriod = nil
+    for _, entry in ipairs(entries) do
+        -- Period header
+        if entry.periodKey ~= lastPeriod then
+            lastPeriod = entry.periodKey
+            L:AddSpacer(4)
+            L:AddText("|cffd4af37" .. Utils.PeriodLabel(entry.periodKey) .. "|r", 12)
+            L:AddSpacer(2)
+        end
+
+        -- Entry row
+        local rowFrame = L:AddFrame(24)
+        rowFrame:EnableMouse(true)
+
+        local bgTex = rowFrame:CreateTexture(nil, "BACKGROUND")
+        bgTex:SetAllPoints()
+        bgTex:SetTexture("Interface\\Buttons\\WHITE8X8")
+        bgTex:SetVertexColor(0.15, 0.15, 0.15, 0.2)
+
+        rowFrame:SetScript("OnEnter", function()
+            bgTex:SetVertexColor(0.2, 0.2, 0.2, 0.4)
+        end)
+        rowFrame:SetScript("OnLeave", function()
+            bgTex:SetVertexColor(0.15, 0.15, 0.15, 0.2)
+        end)
+
+        -- Class-coloured name
+        local classColor = Utils.ClassColor(entry.classFilename)
+        local classHex = string.format("|cff%02x%02x%02x",
+            classColor[1] * 255, classColor[2] * 255, classColor[3] * 255)
+
+        local nameFs = rowFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        nameFs:SetPoint("LEFT", rowFrame, "LEFT", 8, 0)
+        nameFs:SetWidth(180)
+        nameFs:SetJustifyH("LEFT")
+        nameFs:SetText(classHex .. entry.name .. "|r")
+
+        -- Amount (gold coloured)
+        local amtFs = rowFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        amtFs:SetPoint("LEFT", rowFrame, "LEFT", 200, 0)
+        amtFs:SetWidth(120)
+        amtFs:SetJustifyH("LEFT")
+        amtFs:SetText("|cffd4af37" .. Utils.FormatMoneyShort(entry.amount) .. "|r")
+    end
+end
+
+-- ── Goal card ────────────────────────────────────────────────────────────────
+
+function OfficerView:_RenderGoalCard(L, parent, goal, periodKey)
+    local cardStartY = L:GetY()
+    L:SetMargins(CONTAINER_PAD, CONTAINER_PAD)
+    L:AddSpacer(CONTAINER_PAD)
+
+    -- Goal amount + period
+    L:AddText(string.format("|cffd4af37%s|r per member  ·  %s",
+        Utils.FormatMoneyShort(goal.goldAmount),
+        goal.period:gsub("^%l", string.upper)), 12)
+
+    -- Ranks on a separate line
+    local numRanks  = GuildControlGetNumRanks and GuildControlGetNumRanks() or 0
+    local rankNames = {}
+    for i = 0, numRanks - 1 do
+        if goal.targetRanks[i] then
+            rankNames[#rankNames + 1] = GuildControlGetRankName and GuildControlGetRankName(i + 1) or ("Rank "..i)
+        end
+    end
+    L:AddText("|cffaaaaaaRanks: " ..
+        (#rankNames > 0 and table.concat(rankNames, ", ") or "None") .. "|r", 11)
+
+    -- Time remaining
+    local secsLeft = Utils.SecondsRemainingInPeriod(goal.period)
+    local daysLeft = math.floor(secsLeft / 86400)
+    L:AddText(string.format("|cffaaaaaa%d day%s remaining|r",
+        daysLeft, daysLeft == 1 and "" or "s"), 11)
+
+    -- Space before progress bar
+    L:AddSpacer(10)
+
+    -- Overall progress
+    local roster = GM.Donations:GetRoster()
+    local total, met, totalDonated = 0, 0, 0
+    for key, info in pairs(roster) do
+        if goal.targetRanks[info.rankIndex] then
+            total = total + 1
+            local donated = GM.DB:GetDonated(key, periodKey)
+            totalDonated = totalDonated + donated
+            if donated >= goal.goldAmount then met = met + 1 end
+        end
+    end
+    local frac = total > 0 and (met / total) or 0
+    local goalColor = Utils.StatusColor(frac)
+
+    -- Progress bar
+    local barRow = L:AddFrame(16)
+    local track = barRow:CreateTexture(nil, "BACKGROUND")
+    track:SetAllPoints()
+    track:SetTexture("Interface\\RAIDFRAME\\Raid-Bar-Hp-Fill")
+    track:SetVertexColor(0.12, 0.12, 0.12, 0.9)
+
+    local fill = barRow:CreateTexture(nil, "BORDER")
+    fill:SetPoint("TOPLEFT")
+    fill:SetPoint("BOTTOMLEFT")
+    fill:SetTexture("Interface\\RAIDFRAME\\Raid-Bar-Hp-Fill")
+    fill:SetVertexColor(goalColor[1], goalColor[2], goalColor[3], 0.85)
+    fill:SetWidth(1)
+
+    local barText = barRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    barText:SetPoint("LEFT", barRow, "LEFT", 6, 0)
+    barText:SetText(string.format("%d / %d members met goal  (%d%%)", met, total, math.floor(frac * 100)))
+    barText:SetTextColor(1, 1, 1, 1)
+
+    barRow:SetScript("OnSizeChanged", function(_, w)
+        fill:SetWidth(math.max(1, w * math.min(1, frac)))
+    end)
+
+    -- Space after progress bar
+    L:AddSpacer(10)
+
+    -- Total collected this period
+    local collectTarget = total * goal.goldAmount
+    local collectPct = collectTarget > 0 and math.floor(totalDonated / collectTarget * 100) or 0
+    L:AddText(string.format("|cffaaaaaaCollected this period:|r  |cffd4af37%s|r / %s  |cffaaaaaa(%d%%)|r",
+        Utils.FormatMoneyShort(totalDonated),
+        Utils.FormatMoneyShort(collectTarget),
+        collectPct), 11)
+
+    L:AddSpacer(CONTAINER_PAD)
+    L:SetMargins(0, 0)
+
+    local cardBg = _PaintContainer(L, parent, cardStartY)
+
+    -- Edit Goal button (top-right of card)
+    local editBtn = CreateFrame("Button", nil, cardBg, "UIPanelButtonTemplate")
+    editBtn:SetSize(90, 22)
+    editBtn:SetPoint("TOPRIGHT", cardBg, "TOPRIGHT", -8, -6)
+    editBtn:SetText("Edit Goal")
+    editBtn:SetScript("OnClick", function()
+        PlaySound(856)
+        GM.GoalEditor:Open(goal,
+            function() OfficerView:Render() end,
+            function() OfficerView:Render() end)
+    end)
+
+    -- Delete Goal button (cross icon inside a standard button, below Edit)
+    local deleteBtn = CreateFrame("Button", nil, cardBg, "UIPanelButtonTemplate")
+    deleteBtn:SetSize(30, 22)
+    deleteBtn:SetPoint("RIGHT", editBtn, "LEFT", -4, 0)
+    deleteBtn:SetText("")
+
+    local delIcon = deleteBtn:CreateTexture(nil, "OVERLAY")
+    delIcon:SetSize(14, 14)
+    delIcon:SetPoint("CENTER")
+    delIcon:SetTexture("Interface\\RAIDFRAME\\ReadyCheck-NotReady")
+
+    deleteBtn:SetScript("OnEnter", function(btn)
+        GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Delete Goal")
+        GameTooltip:AddLine("This will deactivate the current goal.", 1, 0.5, 0.5)
+        GameTooltip:Show()
+    end)
+    deleteBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    deleteBtn:SetScript("OnClick", function()
+        PlaySound(856)
+        -- Confirmation: require a second click within 3 seconds
+        if not deleteBtn._confirmPending then
+            deleteBtn._confirmPending = true
+            delIcon:SetVertexColor(1, 0.3, 0.3)
+            GM:Print("|cffd9a400GuildMate:|r Click the X again within 3 seconds to confirm deletion.")
+            C_Timer.After(3, function()
+                deleteBtn._confirmPending = false
+                if delIcon then delIcon:SetVertexColor(1, 1, 1) end
+            end)
+        else
+            deleteBtn._confirmPending = false
+            GM.DB:DeactivateAllGoals()
+            GM:Print("|cff4A90D9GuildMate:|r Goal deleted.")
+            OfficerView:Render()
+        end
+    end)
+end
+
+-- ── Action bar ───────────────────────────────────────────────────────────────
+
+function OfficerView:_RenderActionBar(L, parent, goal)
+    local row = L:AddRow(30)
+
+    local incompleteCount = 0
+    if goal then
+        local periodKey = Utils.PeriodKey(time(), goal.period)
+        for key, info in pairs(GM.Donations:GetRoster()) do
+            if goal.targetRanks[info.rankIndex] then
+                if GM.DB:GetDonated(key, periodKey) < goal.goldAmount then
+                    incompleteCount = incompleteCount + 1
+                end
+            end
+        end
+    end
+
+    local rx = 0
+    local function ActionBtn(text, width, onClick, disabled)
+        local btn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+        btn:SetSize(width, 26)
+        btn:SetPoint("LEFT", row, "LEFT", rx, 0)
+        btn:SetText(text)
+        if disabled then btn:Disable() end
+        btn:SetScript("OnClick", function() PlaySound(856); onClick() end)
+        rx = rx + width + 6
+        return btn
+    end
+
+    ActionBtn(string.format("Remind Incomplete (%d)", incompleteCount), 200,
+        function() GM.Donations:RemindIncomplete() end,
+        not goal or incompleteCount == 0)
+
+    ActionBtn("Announce to Guild", 160,
+        function() GM.Donations:AnnounceProgress() end,
+        not goal)
+
+    ActionBtn("Export CSV", 110,
+        function() OfficerView:_ShowExportWindow(goal) end,
+        false)
+end
+
+-- ── Member row ───────────────────────────────────────────────────────────────
+
+function OfficerView:_RenderMemberRow(L, parent, row)
+    local color = Utils.StatusColor(math.min(1, row.frac))
     local pct   = math.min(100, math.floor(row.frac * 100))
+    local periodsAhead = (row.goalAmount > 0 and row.frac >= 1)
+        and math.floor(row.donated / row.goalAmount) - 1 or 0
 
-    -- AceGUI SimpleGroup as a height placeholder; all content is manually anchored
-    local rowGroup = AceGUI:Create("SimpleGroup")
-    rowGroup:SetLayout("Flow")   -- not used — children are anchored manually
-    rowGroup:SetFullWidth(true)
-    rowGroup:SetHeight(ROW_HEIGHT)
-    container:AddChild(rowGroup)
+    local rowFrame = L:AddFrame(ROW_HEIGHT)
+    rowFrame:EnableMouse(true)
 
-    local f = rowGroup.frame
-
-    -- Overlay frame for background, hover, tooltips and manually placed children
-    local overlay = CreateFrame("Frame", nil, f)
-    overlay:SetAllPoints(f)
-    overlay:EnableMouse(true)
-
-    -- Subtle row background
-    local bgTex = overlay:CreateTexture(nil, "BACKGROUND")
+    -- Background
+    local bgTex = rowFrame:CreateTexture(nil, "BACKGROUND")
     bgTex:SetAllPoints()
     bgTex:SetTexture("Interface\\Buttons\\WHITE8X8")
     bgTex:SetVertexColor(0.15, 0.15, 0.15, 0.3)
 
-    -- Hover highlight + tooltip
-    overlay:SetScript("OnEnter", function()
+    -- Hover
+    rowFrame:SetScript("OnEnter", function()
         bgTex:SetVertexColor(0.2, 0.2, 0.2, 0.5)
-        GameTooltip:SetOwner(overlay, "ANCHOR_RIGHT")
+        GameTooltip:SetOwner(rowFrame, "ANCHOR_RIGHT")
         GameTooltip:ClearLines()
         GameTooltip:AddLine(row.name, 1, 1, 1)
         if row.goalAmount > 0 then
             GameTooltip:AddLine(string.format("Donated: %s / %s  (%d%%)",
                 Utils.FormatMoneyShort(row.donated),
                 Utils.FormatMoneyShort(row.goalAmount), pct), 0.8, 0.8, 0.8)
+            if periodsAhead > 0 then
+                local periodWord = (GM.DB:GetActiveGoal() and GM.DB:GetActiveGoal().period == "monthly") and "month" or "week"
+                GameTooltip:AddLine(string.format("+%d %s%s ahead", periodsAhead, periodWord, periodsAhead > 1 and "s" or ""), 0.4, 0.8, 0.4)
+            end
         end
         GameTooltip:Show()
     end)
-    overlay:SetScript("OnLeave", function()
+    rowFrame:SetScript("OnLeave", function()
         bgTex:SetVertexColor(0.15, 0.15, 0.15, 0.3)
         GameTooltip:Hide()
     end)
 
-    -- Clean up overlay on AceGUI release
-    local origOnRelease = rowGroup.OnRelease
-    rowGroup.OnRelease = function(self)
-        overlay:Hide()
-        overlay:SetParent(nil)
-        if origOnRelease then origOnRelease(self) end
-    end
-
-    -- Helper: create a FontString vertically centred in the overlay
-    local function MakeText(xOffset, width, text, fontObj)
-        local fs = overlay:CreateFontString(nil, "OVERLAY", fontObj or "GameFontNormal")
-        fs:SetPoint("LEFT", overlay, "LEFT", xOffset, 0)
+    -- Helper: vertically centred text
+    local function RowText(xOff, width, text)
+        local fs = rowFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        fs:SetPoint("LEFT", rowFrame, "LEFT", xOff, 0)
         fs:SetWidth(width)
         fs:SetJustifyH("LEFT")
         fs:SetJustifyV("MIDDLE")
@@ -342,90 +690,84 @@ function OfficerView:_RenderMemberRow(container, row)
         return fs
     end
 
-    -- Column positions (pixels from left edge of row)
-    local COL_NAME = 8
-    local COL_RANK = 180
-    local COL_AMT  = 280
+    -- Addon indicator (green square = has GuildMate, red = doesn't)
+    local addonUsers = GM.Donations:GetAddonUsers()
+    local hasAddon = addonUsers[row.key]
+    local addonSquare = rowFrame:CreateTexture(nil, "OVERLAY")
+    addonSquare:SetSize(8, 8)
+    addonSquare:SetPoint("LEFT", rowFrame, "LEFT", 8, 0)
+    addonSquare:SetTexture("Interface\\Buttons\\WHITE8X8")
+    if hasAddon then
+        addonSquare:SetVertexColor(0.2, 0.8, 0.2, 1)   -- green
+    else
+        addonSquare:SetVertexColor(0.7, 0.15, 0.15, 1)  -- red
+    end
 
-    -- ── Name ─────────────────────────────────────────────────────────────────
+    -- Name (shifted right to make room for the square)
     local classColor = Utils.ClassColor(row.classFilename)
     local classHex = string.format("|cff%02x%02x%02x",
         classColor[1] * 255, classColor[2] * 255, classColor[3] * 255)
     local onlineStr = row.online and "" or " |cffaaaaaa(offline)|r"
-    MakeText(COL_NAME, 168, classHex .. Utils.Truncate(row.name, 14) .. "|r" .. onlineStr)
+    RowText(24, 156, classHex .. Utils.Truncate(row.name, 14) .. "|r" .. onlineStr)
 
-    -- ── Rank ─────────────────────────────────────────────────────────────────
+    -- Rank
     local rankName = (GuildControlGetRankName and GuildControlGetRankName(row.rankIndex + 1))
         or ("Rank " .. row.rankIndex)
-    MakeText(COL_RANK, 96, "|cffaaaaaa" .. Utils.Truncate(rankName, 10) .. "|r")
+    RowText(180, 96, "|cffaaaaaa" .. Utils.Truncate(rankName, 10) .. "|r")
 
-    -- ── Donated / Target ─────────────────────────────────────────────────────
+    -- Amount + ahead indicator
     local amtStr
     if row.goalAmount > 0 then
         amtStr = string.format("%s / %s",
             Utils.FormatMoneyShort(row.donated),
             Utils.FormatMoneyShort(row.goalAmount))
+        if periodsAhead > 0 then
+            local periodWord = (GM.DB:GetActiveGoal() and GM.DB:GetActiveGoal().period == "monthly") and "mo" or "wk"
+            amtStr = amtStr .. "  |cff5fba47+" .. periodsAhead .. periodWord .. "|r"
+        end
     else
         amtStr = Utils.FormatMoneyShort(row.donated)
     end
-    MakeText(COL_AMT, 120, amtStr)
+    RowText(280, 150, amtStr)
 
-    -- ── Progress bar ─────────────────────────────────────────────────────────
+    -- Progress bar
     if row.goalAmount > 0 then
-        local BAR_LEFT   = 404
-        local BAR_RIGHT  = 80  -- pixels from right edge
-        local BAR_HEIGHT = 14
+        local barFrame = CreateFrame("Frame", nil, rowFrame)
+        barFrame:SetPoint("LEFT", rowFrame, "LEFT", 404, 0)
+        barFrame:SetPoint("RIGHT", rowFrame, "RIGHT", -80, 0)
+        barFrame:SetHeight(14)
 
-        local barFrame = CreateFrame("Frame", nil, overlay)
-        barFrame:SetPoint("LEFT", overlay, "LEFT", BAR_LEFT, 0)
-        barFrame:SetPoint("RIGHT", overlay, "RIGHT", -BAR_RIGHT, 0)
-        barFrame:SetHeight(BAR_HEIGHT)
-
-        -- Dark track
         local track = barFrame:CreateTexture(nil, "BACKGROUND")
         track:SetAllPoints()
         track:SetTexture("Interface\\RAIDFRAME\\Raid-Bar-Hp-Fill")
         track:SetVertexColor(0.12, 0.12, 0.12, 0.9)
 
-        -- Coloured fill
         local fill = barFrame:CreateTexture(nil, "BORDER")
-        fill:SetPoint("TOPLEFT", barFrame, "TOPLEFT", 0, 0)
-        fill:SetPoint("BOTTOMLEFT", barFrame, "BOTTOMLEFT", 0, 0)
+        fill:SetPoint("TOPLEFT")
+        fill:SetPoint("BOTTOMLEFT")
         fill:SetTexture("Interface\\RAIDFRAME\\Raid-Bar-Hp-Fill")
         fill:SetVertexColor(color[1], color[2], color[3], 0.85)
         fill:SetWidth(1)
 
-        -- Percentage text centred in bar
         local pctText = barFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         pctText:SetPoint("CENTER")
         pctText:SetText(pct .. "%")
         pctText:SetTextColor(1, 1, 1, 1)
 
-        barFrame:SetScript("OnSizeChanged", function(_, width)
-            fill:SetWidth(math.max(1, width * math.min(1, row.frac)))
+        barFrame:SetScript("OnSizeChanged", function(_, w)
+            fill:SetWidth(math.max(1, w * math.min(1, row.frac)))
         end)
     end
 
-    -- ── Addon indicator (green dot if member has GuildMate) ──────────────────
-    local addonUsers = GM.Donations:GetAddonUsers()
-    local hasAddon = addonUsers[row.key]
-    if hasAddon then
-        local dot = overlay:CreateTexture(nil, "OVERLAY")
-        dot:SetTexture("Interface\\FriendsFrame\\StatusIcon-Online")
-        dot:SetSize(14, 14)
-        dot:SetPoint("RIGHT", overlay, "RIGHT", -50, 0)
-    end
-
-    -- ── Whisper reminder button (chat icon) ──────────────────────────────────
+    -- Whisper reminder button
     if row.goalAmount > 0 and row.frac < 1 and row.online then
-        local whisperBtn = CreateFrame("Button", nil, overlay)
+        local whisperBtn = CreateFrame("Button", nil, rowFrame)
         whisperBtn:SetSize(22, 22)
-        whisperBtn:SetPoint("RIGHT", overlay, "RIGHT", -20, 0)
+        whisperBtn:SetPoint("RIGHT", rowFrame, "RIGHT", -20, 0)
 
-        local icon = whisperBtn:CreateTexture(nil, "ARTWORK")
-        icon:SetAllPoints()
-        icon:SetTexture("Interface\\ChatFrame\\UI-ChatIcon-Chat-Up")
-
+        local btnIcon = whisperBtn:CreateTexture(nil, "ARTWORK")
+        btnIcon:SetAllPoints()
+        btnIcon:SetTexture("Interface\\ChatFrame\\UI-ChatIcon-Chat-Up")
         whisperBtn:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIcon-Chat-Up")
 
         whisperBtn:SetScript("OnClick", function()
@@ -433,89 +775,33 @@ function OfficerView:_RenderMemberRow(container, row)
             local goal = GM.DB:GetActiveGoal()
             if not goal then return end
             local remaining = goal.goldAmount - row.donated
-            local whisper = string.format(
+            SendChatMessage(string.format(
                 "[GuildMate] Hi %s! Don't forget the %s guild donation goal of %s. You've donated %s so far (%s remaining).",
                 row.name, goal.period,
                 Utils.FormatMoneyShort(goal.goldAmount),
                 Utils.FormatMoneyShort(row.donated),
-                Utils.FormatMoneyShort(remaining))
-            SendChatMessage(whisper, "WHISPER", nil, row.name)
+                Utils.FormatMoneyShort(remaining)),
+                "WHISPER", nil, row.name)
             GM:Print(string.format("|cff4A90D9GuildMate:|r Reminder sent to %s.", row.name))
         end)
 
-        whisperBtn:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        whisperBtn:SetScript("OnEnter", function(btn)
+            GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
             GameTooltip:ClearLines()
             GameTooltip:AddLine("Whisper reminder to " .. row.name, 1, 1, 1)
             GameTooltip:Show()
         end)
-        whisperBtn:SetScript("OnLeave", function()
-            GameTooltip:Hide()
-        end)
+        whisperBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
     end
-end
-
--- ── Action bar ────────────────────────────────────────────────────────────────
-
-function OfficerView:_RenderActionBar(container, goal)
-    local barGroup = AceGUI:Create("SimpleGroup")
-    barGroup:SetLayout("Flow")
-    barGroup:SetFullWidth(true)
-    container:AddChild(barGroup)
-
-    -- Count incomplete members for button label
-    local incompleteCount = 0
-    if goal then
-        local periodKey = Utils.PeriodKey(time(), goal.period)
-        for key, info in pairs(GM.Donations:GetRoster()) do
-            if goal.targetRanks[info.rankIndex] then
-                local donated = GM.DB:GetDonated(key, periodKey)
-                if donated < goal.goldAmount then
-                    incompleteCount = incompleteCount + 1
-                end
-            end
-        end
-    end
-
-    local remindBtn = AceGUI:Create("Button")
-    remindBtn:SetText(string.format("Remind Incomplete (%d)", incompleteCount))
-    remindBtn:SetWidth(200)
-    remindBtn:SetDisabled(not goal or incompleteCount == 0)
-    remindBtn:SetCallback("OnClick", function()
-        PlaySound(856)
-        GM.Donations:RemindIncomplete()
-    end)
-    barGroup:AddChild(remindBtn)
-
-    local announceBtn = AceGUI:Create("Button")
-    announceBtn:SetText("Announce to Guild")
-    announceBtn:SetWidth(170)
-    announceBtn:SetDisabled(not goal)
-    announceBtn:SetCallback("OnClick", function()
-        PlaySound(856)
-        GM.Donations:AnnounceProgress()
-    end)
-    barGroup:AddChild(announceBtn)
-
-    local exportBtn = AceGUI:Create("Button")
-    exportBtn:SetText("Export CSV")
-    exportBtn:SetWidth(120)
-    exportBtn:SetCallback("OnClick", function()
-        PlaySound(856)
-        OfficerView:_ShowExportWindow(goal)
-    end)
-    barGroup:AddChild(exportBtn)
 end
 
 -- ── CSV Export ────────────────────────────────────────────────────────────────
 
 function OfficerView:_ShowExportWindow(goal)
     local roster = GM.Donations:GetRoster()
-    local periodType = goal and goal.period or "weekly"
 
-    -- Collect all period keys across all members
-    local allPeriods = {}
-    local periodSet  = {}
+    -- Collect all period keys
+    local allPeriods, periodSet = {}, {}
     for memberKey in pairs(GM.DB.sv.donations) do
         local rec = GM.DB.sv.donations[memberKey]
         if rec and rec.records then
@@ -529,83 +815,69 @@ function OfficerView:_ShowExportWindow(goal)
     end
     table.sort(allPeriods)
 
-    -- Build CSV header
+    -- Build CSV
     local lines = {}
     local header = "Name,Rank,Online"
-    for _, pk in ipairs(allPeriods) do
-        header = header .. "," .. pk
-    end
+    for _, pk in ipairs(allPeriods) do header = header .. "," .. pk end
     header = header .. ",Total"
     lines[#lines + 1] = header
 
-    -- Build sorted member list
     local members = {}
-    for memberKey in pairs(GM.DB.sv.donations) do
-        members[#members + 1] = memberKey
-    end
+    for mk in pairs(GM.DB.sv.donations) do members[#members + 1] = mk end
     table.sort(members)
 
-    -- Build CSV rows
-    for _, memberKey in ipairs(members) do
-        local rec  = GM.DB.sv.donations[memberKey]
-        local info = roster[memberKey]
-        local name = memberKey
-        local rankName = ""
-        local online   = ""
+    for _, mk in ipairs(members) do
+        local rec  = GM.DB.sv.donations[mk]
+        local info = roster[mk]
+        local name = info and info.name or mk
+        local rankName = info and (GuildControlGetRankName and GuildControlGetRankName(info.rankIndex + 1) or "") or ""
+        local online = info and (info.online and "Yes" or "No") or ""
 
-        if info then
-            name     = info.name or memberKey
-            rankName = (GuildControlGetRankName and GuildControlGetRankName(info.rankIndex + 1)) or ""
-            online   = info.online and "Yes" or "No"
-        end
-
-        local row   = name .. "," .. rankName .. "," .. online
-        local total = 0
-
+        local row, total = name .. "," .. rankName .. "," .. online, 0
         for _, pk in ipairs(allPeriods) do
             local amt = (rec and rec.records and rec.records[pk]) or 0
             total = total + amt
-            -- Convert copper to gold with 2 decimal places
             row = row .. "," .. string.format("%.2f", amt / 10000)
         end
-
         row = row .. "," .. string.format("%.2f", total / 10000)
         lines[#lines + 1] = row
     end
 
     local csv = table.concat(lines, "\n")
 
-    -- Show in a copy-paste AceGUI window
-    local exportFrame = AceGUI:Create("Frame")
-    exportFrame:SetTitle("GuildMate — Export CSV")
-    exportFrame:SetWidth(600)
-    exportFrame:SetHeight(400)
-    exportFrame:SetLayout("Fill")
-    exportFrame:SetCallback("OnClose", function(widget) AceGUI:Release(widget) end)
+    -- Export popup window (raw frame)
+    local ef = CreateFrame("Frame", "GuildMateExportFrame", UIParent)
+    ef:SetSize(600, 400)
+    ef:SetPoint("CENTER")
+    ef:SetFrameStrata("FULLSCREEN_DIALOG")
+    ef:SetMovable(true)
+    ef:EnableMouse(true)
+    Utils.SetFrameColor(ef, 0.06, 0.06, 0.06, 0.98)
 
-    local editBox = AceGUI:Create("MultiLineEditBox")
-    editBox:SetLabel("Select all (Ctrl+A) and copy (Ctrl+C):")
+    local efTitle = ef:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    efTitle:SetPoint("TOP", ef, "TOP", 0, -8)
+    efTitle:SetText("|cff4A90D9GuildMate|r — Export CSV")
+
+    local efClose = CreateFrame("Button", nil, ef, "UIPanelCloseButton")
+    efClose:SetPoint("TOPRIGHT", ef, "TOPRIGHT", 4, 4)
+    efClose:SetScript("OnClick", function() ef:Hide() end)
+
+    local scrollFrame = CreateFrame("ScrollFrame", nil, ef, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", ef, "TOPLEFT", 12, -30)
+    scrollFrame:SetPoint("BOTTOMRIGHT", ef, "BOTTOMRIGHT", -30, 12)
+
+    local editBox = CreateFrame("EditBox", nil, scrollFrame)
+    editBox:SetMultiLine(true)
+    editBox:SetAutoFocus(false)
+    editBox:SetFontObject(GameFontHighlightSmall)
+    editBox:SetWidth(scrollFrame:GetWidth())
     editBox:SetText(csv)
-    editBox:SetFullWidth(true)
-    editBox:SetFullHeight(true)
-    editBox:DisableButton(true)
-    exportFrame:AddChild(editBox)
+    scrollFrame:SetScrollChild(editBox)
 
-    -- Auto-select all text for easy copying
     C_Timer.After(0.1, function()
-        if editBox.editBox then
-            editBox.editBox:SetFocus()
-            editBox.editBox:HighlightText()
-        end
+        editBox:SetFocus()
+        editBox:HighlightText()
     end)
-end
 
--- ── Helpers ───────────────────────────────────────────────────────────────────
-
-function OfficerView:_AddSpacer(container, height)
-    local sp = AceGUI:Create("Label")
-    sp:SetText(" ")
-    sp:SetFullWidth(true)
-    sp:SetHeight(height or 8)
-    container:AddChild(sp)
+    ef:Show()
 end

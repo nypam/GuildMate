@@ -9,12 +9,18 @@ GM.Donations = Donations
 
 -- ── Addon presence tracking ──────────────────────────────────────────────────
 
--- Ephemeral (not saved): tracks who has GuildMate installed among online members.
+-- Tracks who has GuildMate installed.
+-- Persisted in SavedVariables so we remember even across sessions.
 -- [memberKey] = versionString   e.g. "Thrall-Sulfuras" = "0.1.0"
-local _addonUsers = {}
 
 function Donations:GetAddonUsers()
-    return _addonUsers
+    if not GM.DB.sv.addonUsers then GM.DB.sv.addonUsers = {} end
+    return GM.DB.sv.addonUsers
+end
+
+function Donations:SetAddonUser(memberKey, version)
+    if not GM.DB.sv.addonUsers then GM.DB.sv.addonUsers = {} end
+    GM.DB.sv.addonUsers[memberKey] = version
 end
 
 -- Session-local set of members whose goal-met milestone was already announced.
@@ -233,7 +239,7 @@ function Donations:OnCommReceived(message, _channel, sender)
             local sn, sr = sender:match("^(.+)-(.+)$")
             sn = sn or sender
             sr = sr or realm
-            _addonUsers[Utils.MemberKey(sn, sr)] = version
+            Donations:SetAddonUser(Utils.MemberKey(sn, sr), version)
         end
 
     elseif cmd == "GOAL_UPDATE" then
@@ -330,7 +336,7 @@ end
 
 -- ── Module render entry point (called by MainFrame) ───────────────────────────
 
-function Donations:Render(container)
+function Donations:Render()
     -- Delegate to OfficerView or MemberView depending on player rank.
     -- GM.debugOfficer = true forces OfficerView regardless of rank (toggle with /gm debug).
     local _, _, rankIndex = GetGuildInfo("player")
@@ -338,11 +344,11 @@ function Donations:Render(container)
 
     if GM.debugOfficer or GM.DB:IsOfficerRank(rankIndex) then
         if GM.OfficerView then
-            GM.OfficerView:Render(container)
+            GM.OfficerView:Render()
         end
     else
         if GM.MemberView then
-            GM.MemberView:Render(container)
+            GM.MemberView:Render()
         end
     end
 end
