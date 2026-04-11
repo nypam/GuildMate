@@ -255,8 +255,14 @@ function Donations:OnCommReceived(message, _channel, sender)
 
     elseif cmd == "GOAL_UPDATE" then
         -- GOAL_UPDATE|id|goldAmount|period|createdBy|ranks|startEpoch
+        -- createdBy may contain hyphens/special chars, so use [^|]+ for it
         local _, idStr, amountStr, period, createdBy, ranksStr, epochStr =
-            message:match("^(%w+)|(%d+)|(%d+)|(%w+)|([^|]+)|([%d,]+)|(%d+)$")
+            message:match("^(%w+)|(%d+)|(%d+)|([^|]+)|([^|]+)|([^|]+)|(%d+)$")
+
+        -- Debug: log what we received (remove after fixing)
+        GM:Print(string.format("|cff4A90D9GuildMate debug:|r GOAL_UPDATE received: id=%s amt=%s period=%s createdBy=%s ranks=%s epoch=%s",
+            tostring(idStr), tostring(amountStr), tostring(period),
+            tostring(createdBy), tostring(ranksStr), tostring(epochStr)))
 
         local id        = tonumber(idStr)
         local amount    = tonumber(amountStr)
