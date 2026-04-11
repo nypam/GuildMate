@@ -155,11 +155,15 @@ function GM:SlashCommand(input)
         self:Print("|cffffd700WTF/Account/<name>/SavedVariables/GuildMate.lua|r")
         self:Print("Look for debugScan = { ... } near the top.")
     elseif input == "commtest" then
-        -- Send a test message and enable logging to verify comm works
-        self._commDebug = true
-        self:Print("|cff4A90D9GuildMate:|r Comm debug ON. Sending PING to guild...")
-        GM:SendCommMessage("GuildMate", "PING|" .. (UnitName("player") or "?"), "GUILD")
-        self:Print("Waiting for responses... (type /gm commtest again to turn off)")
+        if self._commDebug then
+            self._commDebug = false
+            self:Print("|cff4A90D9GuildMate:|r Comm debug |cffcc3333OFF|r")
+        else
+            self._commDebug = true
+            self:Print("|cff4A90D9GuildMate:|r Comm debug |cff5fba47ON|r. Sending PING to guild...")
+            GM:SendCommMessage("GuildMate", "PING|" .. (UnitName("player") or "?"), "GUILD")
+            self:Print("Waiting for responses... (type /gm commtest again to turn off)")
+        end
 
     elseif input == "sync" then
         self:Print("|cff4A90D9GuildMate:|r Sending sync request to guild...")
