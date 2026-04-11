@@ -402,7 +402,7 @@ end
 -- ── Recipe list ──────────────────────────────────────────────────────────────
 
 local _recipeSearchText = ""
-local _selectedRecipe = nil
+local _selectedRecipe = nil  -- stores spellID (number)
 
 function ProfessionView:_RenderRecipes(L, parent, professionName)
     L:AddSpacer(14)
@@ -463,12 +463,12 @@ function ProfessionView:_RenderRecipes(L, parent, professionName)
 
     L:AddSpacer(4)
 
-    -- Filter recipes by search
+    -- Filter recipes by search (matches against resolved localized name)
     local filtered = recipes
     if _recipeSearchText ~= "" then
         filtered = {}
         for _, r in ipairs(recipes) do
-            if r.name:lower():find(_recipeSearchText, 1, true) then
+            if r.name and r.name:lower():find(_recipeSearchText, 1, true) then
                 filtered[#filtered + 1] = r
             end
         end
@@ -484,7 +484,7 @@ function ProfessionView:_RenderRecipes(L, parent, professionName)
 
     for _, recipe in ipairs(filtered) do
         local hasCrafter = recipe.hasCrafter
-        local isSelected = (_selectedRecipe == recipe.name)
+        local isSelected = (_selectedRecipe == recipe.spellID)
 
         local row = L:AddFrame(24)
         row:EnableMouse(true)
@@ -506,20 +506,20 @@ function ProfessionView:_RenderRecipes(L, parent, professionName)
         end)
 
         -- Click to select/deselect (preserve scroll position)
-        local recipeName = recipe.name
+        local recipeSpellID = recipe.spellID
         row:SetScript("OnMouseUp", function()
             PlaySound(856)
             local scrollPos = GM.MainFrame:GetScrollPosition()
-            if _selectedRecipe == recipeName then
+            if _selectedRecipe == recipeSpellID then
                 _selectedRecipe = nil
             else
-                _selectedRecipe = recipeName
+                _selectedRecipe = recipeSpellID
             end
             ProfessionView:RenderProfession(professionName)
             GM.MainFrame:SetScrollPosition(scrollPos)
         end)
 
-        -- Recipe icon (stored during scan via GetTradeSkillIcon)
+        -- Recipe icon (resolved from spellID via GetSpellInfo, or stored fallback)
         local recipeIcon = row:CreateTexture(nil, "ARTWORK")
         recipeIcon:SetSize(20, 20)
         recipeIcon:SetPoint("LEFT", row, "LEFT", 6, 0)

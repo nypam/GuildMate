@@ -4,6 +4,40 @@ All notable changes to GuildMate will be documented in this file.
 
 ## [Unreleased]
 
+## [v0.4.0] - 2026-04-11
+
+### Added
+- **Professions Phase 2** — recipe scanning with spell ID-based storage (locale-independent)
+- Recipe icons, reagent icons, and item tooltips on hover
+- Reagent inventory check (bag count with green/orange/red colour)
+- Click any recipe to expand reagent details
+- Recipe search field with debounced filtering
+- Recipe broadcast via RECIPE_UPDATE (spellID~icon format)
+- `/gm sync` command — forces full broadcast of goal, donations, professions, recipes
+- `/gm status` command — shows local DB state (goal, donation/profession/recipe counts)
+- `/gm commtest` command — PING/PONG comm test with toggle logging
+- Force Goal button for Guild Master — pushes goal to all online members
+- Auto-broadcast goal + donations when new addon user sends HELLO
+- Scroll position preserved when clicking recipes
+- French profession name canonicalization (Joaillerie → Jewelcrafting, etc.)
+- Version number read from TOC metadata at runtime
+
+### Changed
+- Recipe storage rewritten: keyed by spellID instead of localized name
+- Recipe names resolved at display time via GetSpellInfo (correct per client locale)
+- New DB table `recipes2` replaces old `recipes` (old data ignored)
+- Prefer GetTradeSkillIcon (item icon) over GetSpellInfo icon for recipes
+- All comm regex patterns fixed: `%w+` → `[%w_]+` (Lua `%w` doesn't match underscore)
+- All comm field patterns fixed: `(.+)` → `([^|]+)` (greedy match caused misparsing)
+- Simplified GOAL message format (dropped createdBy field)
+
+### Fixed
+- **Critical**: All comm messages with underscores (DONATION_TOTAL, GOAL_UPDATE, PROF_UPDATE, RECIPE_UPDATE) were silently failing to parse on receiving clients
+- Goal sync not working for new members
+- French locale format string mismatch (DAYS_REMAINING had extra %s)
+- Recipe icons showing question marks (GetRecipeList wasn't passing icon data)
+- Professions not syncing for non-English clients (localized names not recognized)
+
 ## [v0.3.1] - 2026-04-11
 
 ### Added

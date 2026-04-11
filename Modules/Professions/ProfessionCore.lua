@@ -162,31 +162,42 @@ function Professions:GetOverview()
 end
 
 -- ── Recipe DB helpers ─────────────────────────────────────────────────────────
+-- Recipes are keyed by spellID (number) so they're locale-independent.
+-- At display time, GetSpellInfo(spellID) resolves the localized name + icon.
 
 local function _EnsureRecipeDB()
-    if not GM.DB.sv.recipes then
-        GM.DB.sv.recipes = {}
+    if not GM.DB.sv.recipes2 then
+        GM.DB.sv.recipes2 = {}
     end
-    return GM.DB.sv.recipes
+    return GM.DB.sv.recipes2
 end
 
--- Get all recipes for a profession. Returns { [recipeName] = { crafters = {memberKey,...}, reagents = { {name,count},... } }, ... }
-function Professions:GetRecipes(professionName)
-    local db = _EnsureRecipeDB()
-    return db[professionName] or {}
+-- Resolve a spellID to { name, icon } for the current locale
+function Professions:ResolveSpell(spellID)
+    if not spellID or not GetSpellInfo then return nil, nil end
+    local name, _, icon = GetSpellInfo(spellID)
+    return name, icon
 end
 
 -- Get sorted recipe list for a profession.
--- Returns { { name, crafters = {}, reagents = {}, hasCrafter }, ... }
+-- Returns { { spellID, name, icon, itemLink, crafters, reagents, hasCrafter }, ... }
 function Professions:GetRecipeList(professionName)
     local db = _EnsureRecipeDB()
     local profRecipes = db[professionName] or {}
     local result = {}
 
-    for recipeName, data in pairs(profRecipes) do
+    for spellIDStr, data in pairs(profRecipes) do
+        local spellID = tonumber(spellIDStr)
+        local name, spellIcon = Professions:ResolveSpell(spellID)
+        -- Fallback: use stored name if GetSpellInfo fails
+        name = name or data.fallbackName or ("Spell " .. tostring(spellID))
+        -- Prefer stored icon (from GetTradeSkillIcon = item icon) over spell icon
+        local icon = data.icon or spellIcon
+
         result[#result + 1] = {
-            name       = recipeName,
-            icon       = data.icon,
+            spellID    = spellID,
+            name       = name,
+            icon       = icon,
             itemLink   = data.itemLink,
             crafters   = data.crafters or {},
             reagents   = data.reagents or {},
@@ -205,6 +216,17 @@ end
 
 -- ── Recipe scanning ──────────────────────────────────────────────────────────
 
+-- Extract spellID from a tradeskill recipe link.
+-- TBC format: "|cffffd000|Henchant:SPELLID|h[Name]|h|r"
+-- Also handles: "|Htrade:...:SPELLID|h" and "|Hspell:SPELLID|h"
+local function _ExtractSpellID(link)
+    if not link then return nil end
+    local id = link:match("|Henchant:(%d+)|")
+        or link:match("|Htrade:[^:]*:(%d+)|")
+        or link:match("|Hspell:(%d+)|")
+    return tonumber(id)
+end
+
 function Professions:ScanRecipes()
     -- Only works when tradeskill window is open
     local getNumTS = _G["GetNumTradeSkills"]
@@ -213,6 +235,7 @@ function Professions:ScanRecipes()
     local getNumReagents = _G["GetTradeSkillNumReagents"]
     local getTSIcon = _G["GetTradeSkillIcon"]
     local getTSItemLink = _G["GetTradeSkillItemLink"]
+    local getTSRecipeLink = _G["GetTradeSkillRecipeLink"]
 
     if not getNumTS or not getTSInfo then return end
 
@@ -226,7 +249,6 @@ function Professions:ScanRecipes()
         profName = Professions:Canonicalize(rawName)
     end
     if not profName then
-        -- Fallback: try reading first header
         for i = 1, numSkills do
             local name, skillType = getTSInfo(i)
             if skillType == "header" then
@@ -253,45 +275,53 @@ function Professions:ScanRecipes()
         local name, skillType = getTSInfo(i)
         if name and skillType and skillType ~= "header" and skillType ~= "subheader" then
 
-            -- Ensure recipe entry exists
-            if not db[profName][name] then
-                db[profName][name] = { crafters = {}, reagents = {} }
+            -- Try to get spellID from recipe link
+            local recipeLink = getTSRecipeLink and getTSRecipeLink(i)
+            local spellID = _ExtractSpellID(recipeLink)
+
+            -- If no spell link available, try item link
+            if not spellID and getTSItemLink then
+                local itemLink = getTSItemLink(i)
+                spellID = _ExtractSpellID(itemLink)
+            end
+
+            -- Fallback: use a hash of the name (not ideal but functional)
+            if not spellID then
+                spellID = 0
+                for c = 1, #name do
+                    spellID = spellID * 31 + string.byte(name, c)
+                end
+                spellID = spellID % 1000000
+            end
+
+            local key = tostring(spellID)
+
+            if not db[profName][key] then
+                db[profName][key] = { crafters = {}, reagents = {} }
                 changed = true
             end
 
-            local recipe = db[profName][name]
+            local recipe = db[profName][key]
 
-            -- Always refresh icon + link when window is open (fills in old data)
+            -- Store fallback name (localized, for display if GetSpellInfo fails)
+            recipe.fallbackName = name
+
+            -- Always refresh icon when window is open
             if getTSIcon then
                 local newIcon = getTSIcon(i)
-                if newIcon and newIcon ~= recipe.icon then
-                    recipe.icon = newIcon
-                    changed = true
-                end
+                if newIcon then recipe.icon = newIcon end
             end
 
+            -- Store item link for tooltip
             if getTSItemLink then
                 local newLink = getTSItemLink(i)
-                if newLink and newLink ~= recipe.itemLink then
+                if newLink then
                     recipe.itemLink = newLink
                     if GetItemInfo then GetItemInfo(newLink) end
-                    changed = true
                 end
             end
 
-
-            -- Pre-cache reagent items too (so icons resolve on first view)
-            if getNumReagents and getTSReagent then
-                local nr = getNumReagents(i)
-                if nr then
-                    for j = 1, nr do
-                        local rn = getTSReagent(i, j)
-                        if rn then GetItemInfo(rn) end
-                    end
-                end
-            end
-
-            -- Add this player as a crafter if not already listed
+            -- Add this player as crafter
             local alreadyCrafter = false
             for _, ck in ipairs(recipe.crafters) do
                 if ck == memberKey then alreadyCrafter = true; break end
@@ -301,7 +331,7 @@ function Professions:ScanRecipes()
                 changed = true
             end
 
-            -- Scan reagents (rescan if empty or missing icons from old data)
+            -- Scan reagents (rescan if empty or missing icons)
             local needsRescan = #recipe.reagents == 0
             if not needsRescan and #recipe.reagents > 0 and not recipe.reagents[1].icon then
                 recipe.reagents = {}
@@ -327,7 +357,6 @@ function Professions:ScanRecipes()
     end
 
     if changed then
-        -- Broadcast recipe data
         self:BroadcastRecipes(memberKey, profName)
         GM.MainFrame:RefreshActiveView()
     end
@@ -340,23 +369,23 @@ function Professions:BroadcastRecipes(memberKey, profName)
     local profRecipes = db[profName]
     if not profRecipes then return end
 
-    -- Build list of recipes this member can craft
-    local myRecipes = {}
-    for recipeName, data in pairs(profRecipes) do
+    -- Build list: "spellID~iconID;spellID~iconID;..."
+    local parts = {}
+    for spellIDStr, data in pairs(profRecipes) do
         for _, ck in ipairs(data.crafters) do
             if ck == memberKey then
-                myRecipes[#myRecipes + 1] = recipeName
+                local iconStr = data.icon and tostring(data.icon) or "0"
+                parts[#parts + 1] = spellIDStr .. "~" .. iconStr
                 break
             end
         end
     end
 
-    if #myRecipes == 0 then return end
+    if #parts == 0 then return end
 
-    -- RECIPE_UPDATE|memberKey|profName|recipe1;recipe2;recipe3
-    -- AceComm handles splitting long messages automatically
+    -- RECIPE_UPDATE|memberKey|profName|spellID~icon;spellID~icon;...
     local msg = string.format("RECIPE_UPDATE|%s|%s|%s",
-        memberKey, profName, table.concat(myRecipes, ";"))
+        memberKey, profName, table.concat(parts, ";"))
 
     GM:SendCommMessage("GuildMate", msg, "GUILD")
 end
@@ -425,25 +454,35 @@ function Professions:OnCommReceived(message, _channel, sender)
     local cmd = message:match("^([%w_]+)")
 
     if cmd == "RECIPE_UPDATE" then
-        -- RECIPE_UPDATE|memberKey|profName|recipe1;recipe2;recipe3
+        -- RECIPE_UPDATE|memberKey|profName|spellID~icon;spellID~icon;...
         local _, memberKey, profName, recipeStr = message:match("^([%w_]+)|([^|]+)|([^|]+)|(.+)$")
         if not memberKey or not profName or not recipeStr then return true end
 
         local db = _EnsureRecipeDB()
         if not db[profName] then db[profName] = {} end
 
-        for recipeName in recipeStr:gmatch("[^;]+") do
-            if recipeName and recipeName ~= "" then
-                if not db[profName][recipeName] then
-                    db[profName][recipeName] = { crafters = {}, reagents = {} }
+        for entry in recipeStr:gmatch("[^;]+") do
+            local spellIDStr, iconStr = entry:match("^(%d+)~(%d+)$")
+            if not spellIDStr then spellIDStr = entry:match("^(%d+)$") end
+            if not spellIDStr then
+                -- Legacy: entry is a recipe name, skip
+            else
+                local key = spellIDStr
+                local iconID = tonumber(iconStr)
+
+                if not db[profName][key] then
+                    db[profName][key] = { crafters = {}, reagents = {} }
+                end
+                if iconID and iconID > 0 then
+                    db[profName][key].icon = iconID
                 end
                 -- Add sender as crafter if not already listed
                 local already = false
-                for _, ck in ipairs(db[profName][recipeName].crafters) do
+                for _, ck in ipairs(db[profName][key].crafters) do
                     if ck == memberKey then already = true; break end
                 end
                 if not already then
-                    db[profName][recipeName].crafters[#db[profName][recipeName].crafters + 1] = memberKey
+                    db[profName][key].crafters[#db[profName][key].crafters + 1] = memberKey
                 end
             end
         end
