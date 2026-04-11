@@ -378,7 +378,8 @@ function Professions:OnCommReceived(message, _channel, sender)
 
     if cmd == "RECIPE_UPDATE" then
         -- RECIPE_UPDATE|memberKey|profName|recipe1;recipe2;recipe3
-        local _, memberKey, profName, recipeStr = message:match("^(%w+)|(.+)|(.+)|(.+)$")
+        -- Use non-greedy [^|]+ to avoid ambiguous matching across | separators
+        local _, memberKey, profName, recipeStr = message:match("^(%w+)|([^|]+)|([^|]+)|(.+)$")
         if not memberKey or not profName or not recipeStr then return true end
 
         local db = _EnsureRecipeDB()
@@ -407,7 +408,7 @@ function Professions:OnCommReceived(message, _channel, sender)
     if cmd ~= "PROF_UPDATE" then return false end
 
     -- PROF_UPDATE|memberKey|timestamp|Alchemy:375:375,Mining:300:375
-    local _, memberKey, tsStr, profStr = message:match("^(%w+)|(.+)|(%d+)|(.+)$")
+    local _, memberKey, tsStr, profStr = message:match("^(%w+)|([^|]+)|(%d+)|(.+)$")
     local timestamp = tonumber(tsStr)
 
     if not memberKey or not timestamp or not profStr then return true end

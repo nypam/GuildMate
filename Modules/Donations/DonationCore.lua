@@ -217,7 +217,7 @@ function Donations:OnCommReceived(message, _channel, sender)
 
     if cmd == "DONATION_TOTAL" then
         -- DONATION_TOTAL|memberKey|periodKey|total
-        local _, memberKey, periodKey, totalStr = message:match("^(%w+)|(.+)|(.+)|(%d+)$")
+        local _, memberKey, periodKey, totalStr = message:match("^(%w+)|([^|]+)|([^|]+)|(%d+)$")
         local total = tonumber(totalStr)
         if memberKey and periodKey and total then
             GM.DB:SetDonationTotal(memberKey, periodKey, total)
