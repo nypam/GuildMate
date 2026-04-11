@@ -190,6 +190,18 @@ function GM:SlashCommand(input)
             self:Print("  → Professions broadcasted")
         end
 
+        if GM.Professions and GM.Professions.BroadcastRecipes and GM.DB.sv.recipes2 then
+            local myName = UnitName("player") or "Unknown"
+            local myRealm = GetRealmName and GetRealmName() or "Unknown"
+            local myKey = GM.Utils.MemberKey(myName, myRealm)
+            local recipeCount = 0
+            for profName in pairs(GM.DB.sv.recipes2) do
+                GM.Professions:BroadcastRecipes(myKey, profName)
+                recipeCount = recipeCount + 1
+            end
+            self:Print("  → Recipes broadcasted (" .. recipeCount .. " professions)")
+        end
+
         self:Print("|cff5fba47Sync complete.|r Other online members will receive your data shortly.")
 
     elseif input == "status" then

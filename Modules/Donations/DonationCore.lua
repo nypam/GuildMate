@@ -242,8 +242,8 @@ function Donations:OnCommReceived(message, _channel, sender)
             sr = sr or realm
             Donations:SetAddonUser(Utils.MemberKey(sn, sr), version)
 
-            -- New member just came online — share our goal and donation data
-            -- so they don't have to wait for the next bank open or officer login.
+            -- New member just came online — share everything we have
+            -- so they don't have to wait for bank open or tradeskill scan.
             C_Timer.After(2, function()
                 local goal = GM.DB:GetActiveGoal()
                 if goal and Donations.BroadcastGoal then
@@ -251,6 +251,21 @@ function Donations:OnCommReceived(message, _channel, sender)
                 end
                 if Donations.BroadcastKnownTotals then
                     Donations:BroadcastKnownTotals()
+                end
+                -- Broadcast professions + recipes
+                if GM.Professions then
+                    local myName = UnitName("player") or "Unknown"
+                    local myRealm = GetRealmName and GetRealmName() or "Unknown"
+                    local myKey = Utils.MemberKey(myName, myRealm)
+                    if GM.Professions.BroadcastProfessions then
+                        GM.Professions:BroadcastProfessions(myKey)
+                    end
+                    -- Broadcast recipes for each profession we have data for
+                    if GM.Professions.BroadcastRecipes and GM.DB.sv.recipes2 then
+                        for profName in pairs(GM.DB.sv.recipes2) do
+                            GM.Professions:BroadcastRecipes(myKey, profName)
+                        end
+                    end
                 end
             end)
         end
