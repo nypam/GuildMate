@@ -1,6 +1,6 @@
 # AI session docs
 CLAUDE.md
 docs/task.md
-
+docs/*
 # Claude Code local settings
 .claude/
