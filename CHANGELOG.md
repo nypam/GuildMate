@@ -4,6 +4,27 @@ All notable changes to GuildMate will be documented in this file.
 
 ## [Unreleased]
 
+## [v0.3.0] - 2026-04-11
+
+### Added
+- **Professions module (Phase 1)** — scans own professions on login, broadcasts to guild via AceComm, synced across all addon users
+- Professions overview page — all 13 TBC professions listed with member count, highest level, avg level, progress bars
+- Per-profession roster view — class-coloured member list with skill levels, progress bars, search field
+- Sidebar sub-menu for professions: primary crafting, primary gathering, secondary (collapsible, only visible when active)
+- Profession data persisted in SavedVariables (`GuildMateDB.professions`)
+- Auto re-scan on TRADE_SKILL_SHOW, TRADE_SKILL_UPDATE, SKILL_LINES_CHANGED events
+- Requests module placeholder with Gold/Craft sub-items (coming soon)
+- Current week/month highlight in member history (tinted background, left accent bar, "(current)" label)
+- Collapsible Guild Donation Logs in member view (Show/Hide button, off by default)
+- Summary + last deposit merged into single row with status-coloured background in member view
+- Two-container layout in member view: goal info (with padding) + status bar (edge-to-edge), wrapped in a single parent border
+
+### Changed
+- Member view status card split into bordered goal container + edge-to-edge status summary
+- History rows now show progress bars, coloured squares, and future "covered" periods
+- Professions overview sorted by highest level first, then alphabetical
+- Sidebar profession order: crafting → gathering → secondary
+
 ## [v0.2.0] - 2026-04-11
 
 ### Added
