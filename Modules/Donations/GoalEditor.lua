@@ -52,11 +52,11 @@ function GoalEditor:_Build()
     local L = Utils.LayoutBuilder(parent)
 
     -- Title
-    L:AddText("|cff4A90D9" .. (_draft.id and "Edit Donation Goal" or "New Donation Goal") .. "|r", 18, GameFontHighlight)
+    L:AddText("|cff4A90D9" .. (_draft.id and GM.L["EDIT_DONATION_GOAL"] or GM.L["NEW_DONATION_GOAL"]) .. "|r", 18, GameFontHighlight)
     L:AddSpacer(10)
 
     -- ── Gold amount ──────────────────────────────────────────────────────────
-    L:AddHeader("Gold Amount per Member")
+    L:AddHeader(GM.L["GOLD_AMOUNT"])
     L:AddSpacer(4)
 
     local amtBox = L:AddEditBox(tostring(math.floor(_draft.goldAmount / 10000)), 100)
@@ -84,7 +84,7 @@ function GoalEditor:_Build()
     L:AddSpacer(8)
 
     -- ── Period ───────────────────────────────────────────────────────────────
-    L:AddHeader("Donation Period")
+    L:AddHeader(GM.L["DONATION_PERIOD"])
     L:AddSpacer(4)
 
     local periodRow = L:AddRow(28)
@@ -95,7 +95,7 @@ function GoalEditor:_Build()
 
     local weeklyLbl = weeklyBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     weeklyLbl:SetPoint("LEFT", weeklyBtn, "RIGHT", 4, 0)
-    weeklyLbl:SetText("Weekly")
+    weeklyLbl:SetText(GM.L["WEEKLY"])
 
     local monthlyBtn = CreateFrame("CheckButton", nil, periodRow, "UICheckButtonTemplate")
     monthlyBtn:SetSize(24, 24)
@@ -104,7 +104,7 @@ function GoalEditor:_Build()
 
     local monthlyLbl = monthlyBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     monthlyLbl:SetPoint("LEFT", monthlyBtn, "RIGHT", 4, 0)
-    monthlyLbl:SetText("Monthly")
+    monthlyLbl:SetText(GM.L["MONTHLY"])
 
     -- Radio behaviour
     weeklyBtn:SetScript("OnClick", function()
@@ -121,7 +121,7 @@ function GoalEditor:_Build()
     L:AddSpacer(8)
 
     -- ── Target ranks ─────────────────────────────────────────────────────────
-    L:AddHeader("Apply To Ranks")
+    L:AddHeader(GM.L["APPLY_TO_RANKS"])
     L:AddSpacer(4)
 
     local numRanks = GuildControlGetNumRanks and GuildControlGetNumRanks() or 0
@@ -137,7 +137,7 @@ function GoalEditor:_Build()
     L:AddSpacer(8)
 
     -- ── Start ────────────────────────────────────────────────────────────────
-    L:AddHeader("Starts")
+    L:AddHeader(GM.L["STARTS"])
     L:AddSpacer(4)
 
     local startRow = L:AddRow(28)
@@ -148,7 +148,7 @@ function GoalEditor:_Build()
 
     local nowLbl = nowBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     nowLbl:SetPoint("LEFT", nowBtn, "RIGHT", 4, 0)
-    nowLbl:SetText("This period")
+    nowLbl:SetText(GM.L["THIS_PERIOD"])
 
     local nextBtn = CreateFrame("CheckButton", nil, startRow, "UICheckButtonTemplate")
     nextBtn:SetSize(24, 24)
@@ -157,7 +157,7 @@ function GoalEditor:_Build()
 
     local nextLbl = nextBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     nextLbl:SetPoint("LEFT", nextBtn, "RIGHT", 4, 0)
-    nextLbl:SetText("Next period")
+    nextLbl:SetText(GM.L["NEXT_PERIOD"])
 
     nowBtn:SetScript("OnClick", function()
         _draft.startNow = true
@@ -178,7 +178,7 @@ function GoalEditor:_Build()
     local cancelBtn = CreateFrame("Button", nil, btnRow, "UIPanelButtonTemplate")
     cancelBtn:SetSize(110, 26)
     cancelBtn:SetPoint("LEFT", btnRow, "LEFT", 0, 0)
-    cancelBtn:SetText("Cancel")
+    cancelBtn:SetText(GM.L["CANCEL"])
     cancelBtn:SetScript("OnClick", function()
         PlaySound(856)
         if _onCancel then _onCancel() end
@@ -187,7 +187,7 @@ function GoalEditor:_Build()
     local saveBtn = CreateFrame("Button", nil, btnRow, "UIPanelButtonTemplate")
     saveBtn:SetSize(130, 26)
     saveBtn:SetPoint("LEFT", cancelBtn, "RIGHT", 8, 0)
-    saveBtn:SetText("Save Goal")
+    saveBtn:SetText(GM.L["SAVE_GOAL"])
     saveBtn:SetScript("OnClick", function()
         PlaySound(856)
         GoalEditor:_Commit()
@@ -200,14 +200,14 @@ end
 
 function GoalEditor:_Commit()
     if _draft.goldAmount < 10000 then
-        GM:Print("|cffff4444GuildMate:|r Gold amount must be at least 1g.")
+        GM:Print(GM.L["ERR_MIN_GOLD"])
         return
     end
 
     local hasRank = false
     for _ in pairs(_draft.targetRanks) do hasRank = true; break end
     if not hasRank then
-        GM:Print("|cffff4444GuildMate:|r Select at least one target rank.")
+        GM:Print(GM.L["ERR_NO_RANK"])
         return
     end
 
@@ -225,8 +225,7 @@ function GoalEditor:_Commit()
     GM.DB:SaveGoal(goal)
     GM.Donations:BroadcastGoal(goal)
 
-    GM:Print(string.format(
-        "|cff4A90D9GuildMate:|r Goal set — %s per member, %s.",
+    GM:Print(string.format(GM.L["GOAL_SET"],
         Utils.FormatMoneyShort(goal.goldAmount), goal.period))
 
     if _onSave then _onSave(goal) end
