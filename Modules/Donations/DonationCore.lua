@@ -7,6 +7,20 @@ local Utils = GM.Utils
 local Donations = {}
 GM.Donations = Donations
 
+-- ── Addon presence tracking ──────────────────────────────────────────────────
+
+-- Ephemeral (not saved): tracks who has GuildMate installed among online members.
+-- [memberKey] = versionString   e.g. "Thrall-Sulfuras" = "0.1.0"
+local _addonUsers = {}
+
+function Donations:GetAddonUsers()
+    return _addonUsers
+end
+
+-- Session-local set of members whose goal-met milestone was already announced.
+-- Keyed by "memberKey|periodKey" to avoid re-announcing on every bank scan.
+local _announcedMilestones = {}
+
 -- ── Roster cache ──────────────────────────────────────────────────────────────
 
 -- [memberKey] = { name, realm, rankIndex, classFilename, online }
@@ -124,15 +138,21 @@ function Donations:ProcessTransactionLog()
                     string.format("DONATION_TOTAL|%s|%s|%d", memberKey, periodKey, logTotal),
                     "GUILD")
 
-                -- Announce in guild chat when a member just met the goal
+                -- Announce in guild chat when an online member just met the goal
                 if goal and GM.DB:GetSetting("goalMetAnnounce")
                    and prevTotal < goal.goldAmount
                    and logTotal >= goal.goldAmount then
-                    local name = memberKey:match("^(.+)-[^-]+$") or memberKey
-                    SendChatMessage(
-                        string.format("[GuildMate] %s has met the %s donation goal of %s!",
-                            name, goal.period, Utils.FormatMoneyShort(goal.goldAmount)),
-                        "GUILD")
+                    local milestoneKey = memberKey .. "|" .. periodKey
+                    local rosterInfo = _roster[memberKey]
+                    if rosterInfo and rosterInfo.online
+                       and not _announcedMilestones[milestoneKey] then
+                        _announcedMilestones[milestoneKey] = true
+                        local name = rosterInfo.name or memberKey:match("^(.+)-[^-]+$") or memberKey
+                        SendChatMessage(
+                            string.format("[GuildMate] %s has met the %s donation goal of %s!",
+                                name, goal.period, Utils.FormatMoneyShort(goal.goldAmount)),
+                            "GUILD")
+                    end
                 end
             end
         end
@@ -184,7 +204,7 @@ end
 
 -- ── Comm handler ─────────────────────────────────────────────────────────────
 
-function Donations:OnCommReceived(message)
+function Donations:OnCommReceived(message, _channel, sender)
     local cmd = message:match("^(%w+)")
 
     if cmd == "DONATION_TOTAL" then
@@ -202,6 +222,18 @@ function Donations:OnCommReceived(message)
                     GM.MainFrame:RefreshActiveView()
                 end)
             end
+        end
+
+    elseif cmd == "HELLO" then
+        -- HELLO|version  — sender has GuildMate installed
+        local _, version = message:match("^(%w+)|(.+)$")
+        if version and sender then
+            local realm = GetRealmName and GetRealmName() or "Unknown"
+            -- sender may be "Name" or "Name-Realm"
+            local sn, sr = sender:match("^(.+)-(.+)$")
+            sn = sn or sender
+            sr = sr or realm
+            _addonUsers[Utils.MemberKey(sn, sr)] = version
         end
 
     elseif cmd == "GOAL_UPDATE" then

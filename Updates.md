@@ -2,6 +2,27 @@
 
 ---
 
+## 2026-04-11 — Addon detection & per-player whisper reminders
+
+### Addon detection
+Every client now broadcasts a `HELLO|version` message to the guild on login. The officer
+roster shows a green dot (the WoW online status icon) next to members who have GuildMate
+installed. This tells officers at a glance who is contributing to bank scan coverage.
+
+- Uses `Interface\FriendsFrame\StatusIcon-Online` inline icon
+- Ephemeral — only tracks who's online this session, not persisted
+
+### Per-player whisper reminder
+Each roster row now shows a chat icon (`Interface\ChatFrame\UI-ChatIcon-Chat-Up`) after
+the progress bar. Clicking it whispers that specific member a personalised donation
+reminder with their current progress and remaining amount.
+
+- Only shown for online members who haven't met the goal yet
+- Tooltip on hover: "Whisper reminder to PlayerName"
+- Prints confirmation in officer's chat: "Reminder sent to PlayerName."
+
+---
+
 ## 2026-04-10 — Universal bank sync
 
 ### Problem

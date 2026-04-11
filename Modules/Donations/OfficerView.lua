@@ -278,20 +278,23 @@ function OfficerView:_RenderRoster(outerContainer, container, goal, periodKey)
     end
 end
 
+-- Row height for member rows
+local ROW_HEIGHT = 44
+
 function OfficerView:_RenderMemberRow(container, row)
     local color = Utils.StatusColor(row.frac)
     local pct   = math.min(100, math.floor(row.frac * 100))
 
-    -- Row container
+    -- AceGUI SimpleGroup as a height placeholder; all content is manually anchored
     local rowGroup = AceGUI:Create("SimpleGroup")
-    rowGroup:SetLayout("Flow")
+    rowGroup:SetLayout("Flow")   -- not used — children are anchored manually
     rowGroup:SetFullWidth(true)
-    rowGroup:SetHeight(34)
+    rowGroup:SetHeight(ROW_HEIGHT)
     container:AddChild(rowGroup)
 
     local f = rowGroup.frame
 
-    -- All custom textures go on a child frame so they're destroyed on release
+    -- Overlay frame for background, hover, tooltips and manually placed children
     local overlay = CreateFrame("Frame", nil, f)
     overlay:SetAllPoints(f)
     overlay:EnableMouse(true)
@@ -302,7 +305,7 @@ function OfficerView:_RenderMemberRow(container, row)
     bgTex:SetTexture("Interface\\Buttons\\WHITE8X8")
     bgTex:SetVertexColor(0.15, 0.15, 0.15, 0.3)
 
-    -- Hover highlight
+    -- Hover highlight + tooltip
     overlay:SetScript("OnEnter", function()
         bgTex:SetVertexColor(0.2, 0.2, 0.2, 0.5)
         GameTooltip:SetOwner(overlay, "ANCHOR_RIGHT")
@@ -320,7 +323,7 @@ function OfficerView:_RenderMemberRow(container, row)
         GameTooltip:Hide()
     end)
 
-    -- Clean up the overlay when AceGUI recycles this widget
+    -- Clean up overlay on AceGUI release
     local origOnRelease = rowGroup.OnRelease
     rowGroup.OnRelease = function(self)
         overlay:Hide()
@@ -328,83 +331,127 @@ function OfficerView:_RenderMemberRow(container, row)
         if origOnRelease then origOnRelease(self) end
     end
 
-    -- ── Left side: Name (status) ──────────────────────────────────────────────
+    -- Helper: create a FontString vertically centred in the overlay
+    local function MakeText(xOffset, width, text, fontObj)
+        local fs = overlay:CreateFontString(nil, "OVERLAY", fontObj or "GameFontNormal")
+        fs:SetPoint("LEFT", overlay, "LEFT", xOffset, 0)
+        fs:SetWidth(width)
+        fs:SetJustifyH("LEFT")
+        fs:SetJustifyV("MIDDLE")
+        fs:SetText(text)
+        return fs
+    end
+
+    -- Column positions (pixels from left edge of row)
+    local COL_NAME = 8
+    local COL_RANK = 180
+    local COL_AMT  = 280
+
+    -- ── Name ─────────────────────────────────────────────────────────────────
     local classColor = Utils.ClassColor(row.classFilename)
-    local nameLabel = AceGUI:Create("Label")
     local classHex = string.format("|cff%02x%02x%02x",
         classColor[1] * 255, classColor[2] * 255, classColor[3] * 255)
     local onlineStr = row.online and "" or " |cffaaaaaa(offline)|r"
-    nameLabel:SetText(classHex .. Utils.Truncate(row.name, 14) .. "|r" .. onlineStr)
-    nameLabel:SetRelativeWidth(0.25)
-    rowGroup:AddChild(nameLabel)
+    MakeText(COL_NAME, 168, classHex .. Utils.Truncate(row.name, 14) .. "|r" .. onlineStr)
 
-    -- ── Rank ──────────────────────────────────────────────────────────────────
+    -- ── Rank ─────────────────────────────────────────────────────────────────
     local rankName = (GuildControlGetRankName and GuildControlGetRankName(row.rankIndex + 1))
         or ("Rank " .. row.rankIndex)
-    local rankLabel = AceGUI:Create("Label")
-    rankLabel:SetText("|cffaaaaaa" .. Utils.Truncate(rankName, 10) .. "|r")
-    rankLabel:SetRelativeWidth(0.15)
-    rowGroup:AddChild(rankLabel)
+    MakeText(COL_RANK, 96, "|cffaaaaaa" .. Utils.Truncate(rankName, 10) .. "|r")
 
-    -- ── Donated / Target ──────────────────────────────────────────────────────
-    local amtLabel = AceGUI:Create("Label")
+    -- ── Donated / Target ─────────────────────────────────────────────────────
+    local amtStr
     if row.goalAmount > 0 then
-        amtLabel:SetText(string.format("%s / %s",
+        amtStr = string.format("%s / %s",
             Utils.FormatMoneyShort(row.donated),
-            Utils.FormatMoneyShort(row.goalAmount)))
+            Utils.FormatMoneyShort(row.goalAmount))
     else
-        amtLabel:SetText(Utils.FormatMoneyShort(row.donated))
+        amtStr = Utils.FormatMoneyShort(row.donated)
     end
-    amtLabel:SetRelativeWidth(0.18)
-    rowGroup:AddChild(amtLabel)
+    MakeText(COL_AMT, 120, amtStr)
 
-    -- ── Progress bar (fills remaining right side) ─────────────────────────────
+    -- ── Progress bar ─────────────────────────────────────────────────────────
     if row.goalAmount > 0 then
-        local barLabel = AceGUI:Create("Label")
-        barLabel:SetText(" ")
-        barLabel:SetRelativeWidth(0.42)
-        barLabel:SetHeight(18)
-        rowGroup:AddChild(barLabel)
+        local BAR_LEFT   = 404
+        local BAR_RIGHT  = 80  -- pixels from right edge
+        local BAR_HEIGHT = 14
 
-        local bf = barLabel.frame
-
-        -- Bar container on a child frame for clean recycling
-        local barOverlay = CreateFrame("Frame", nil, bf)
-        barOverlay:SetPoint("TOPLEFT", bf, "TOPLEFT", 2, -2)
-        barOverlay:SetPoint("BOTTOMRIGHT", bf, "BOTTOMRIGHT", -2, 2)
+        local barFrame = CreateFrame("Frame", nil, overlay)
+        barFrame:SetPoint("LEFT", overlay, "LEFT", BAR_LEFT, 0)
+        barFrame:SetPoint("RIGHT", overlay, "RIGHT", -BAR_RIGHT, 0)
+        barFrame:SetHeight(BAR_HEIGHT)
 
         -- Dark track
-        local track = barOverlay:CreateTexture(nil, "BACKGROUND")
+        local track = barFrame:CreateTexture(nil, "BACKGROUND")
         track:SetAllPoints()
         track:SetTexture("Interface\\RAIDFRAME\\Raid-Bar-Hp-Fill")
         track:SetVertexColor(0.12, 0.12, 0.12, 0.9)
 
         -- Coloured fill
-        local fill = barOverlay:CreateTexture(nil, "BORDER")
-        fill:SetPoint("TOPLEFT", barOverlay, "TOPLEFT", 0, 0)
-        fill:SetPoint("BOTTOMLEFT", barOverlay, "BOTTOMLEFT", 0, 0)
+        local fill = barFrame:CreateTexture(nil, "BORDER")
+        fill:SetPoint("TOPLEFT", barFrame, "TOPLEFT", 0, 0)
+        fill:SetPoint("BOTTOMLEFT", barFrame, "BOTTOMLEFT", 0, 0)
         fill:SetTexture("Interface\\RAIDFRAME\\Raid-Bar-Hp-Fill")
         fill:SetVertexColor(color[1], color[2], color[3], 0.85)
         fill:SetWidth(1)
 
-        -- Percentage text centered in bar
-        local pctText = barOverlay:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        -- Percentage text centred in bar
+        local pctText = barFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         pctText:SetPoint("CENTER")
         pctText:SetText(pct .. "%")
         pctText:SetTextColor(1, 1, 1, 1)
 
-        -- Update fill width when sized
-        barOverlay:SetScript("OnSizeChanged", function(self, width)
+        barFrame:SetScript("OnSizeChanged", function(_, width)
             fill:SetWidth(math.max(1, width * math.min(1, row.frac)))
         end)
+    end
 
-        -- Clean up bar overlay on release
-        local origBarRelease = barLabel.OnRelease
-        barLabel.OnRelease = function(self)
-            barOverlay:Hide()
-            barOverlay:SetParent(nil)
-            if origBarRelease then origBarRelease(self) end
-        end
+    -- ── Addon indicator (green dot if member has GuildMate) ──────────────────
+    local addonUsers = GM.Donations:GetAddonUsers()
+    local hasAddon = addonUsers[row.key]
+    if hasAddon then
+        local dot = overlay:CreateTexture(nil, "OVERLAY")
+        dot:SetTexture("Interface\\FriendsFrame\\StatusIcon-Online")
+        dot:SetSize(14, 14)
+        dot:SetPoint("RIGHT", overlay, "RIGHT", -50, 0)
+    end
+
+    -- ── Whisper reminder button (chat icon) ──────────────────────────────────
+    if row.goalAmount > 0 and row.frac < 1 and row.online then
+        local whisperBtn = CreateFrame("Button", nil, overlay)
+        whisperBtn:SetSize(22, 22)
+        whisperBtn:SetPoint("RIGHT", overlay, "RIGHT", -20, 0)
+
+        local icon = whisperBtn:CreateTexture(nil, "ARTWORK")
+        icon:SetAllPoints()
+        icon:SetTexture("Interface\\ChatFrame\\UI-ChatIcon-Chat-Up")
+
+        whisperBtn:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIcon-Chat-Up")
+
+        whisperBtn:SetScript("OnClick", function()
+            PlaySound(856)
+            local goal = GM.DB:GetActiveGoal()
+            if not goal then return end
+            local remaining = goal.goldAmount - row.donated
+            local whisper = string.format(
+                "[GuildMate] Hi %s! Don't forget the %s guild donation goal of %s. You've donated %s so far (%s remaining).",
+                row.name, goal.period,
+                Utils.FormatMoneyShort(goal.goldAmount),
+                Utils.FormatMoneyShort(row.donated),
+                Utils.FormatMoneyShort(remaining))
+            SendChatMessage(whisper, "WHISPER", nil, row.name)
+            GM:Print(string.format("|cff4A90D9GuildMate:|r Reminder sent to %s.", row.name))
+        end)
+
+        whisperBtn:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:ClearLines()
+            GameTooltip:AddLine("Whisper reminder to " .. row.name, 1, 1, 1)
+            GameTooltip:Show()
+        end)
+        whisperBtn:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
     end
 end
 

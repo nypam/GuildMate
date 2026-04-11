@@ -51,6 +51,14 @@ end
 function Events.OnPlayerLogin()
     -- GUILD_ROSTER_UPDATE fires automatically on login in TBC Anniversary.
 
+    -- Announce our presence so other clients know we have the addon.
+    -- Delay 5s to let AceComm settle after login.
+    C_Timer.After(5, function()
+        GM:SendCommMessage("GuildMate",
+            "HELLO|" .. (GM.version or "0.0.0"),
+            "GUILD")
+    end)
+
     -- Re-broadcast the active goal so other guild members pick it up.
     -- Delay 8s to let roster/comm settle before sending.
     C_Timer.After(8, function()
