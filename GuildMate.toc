@@ -23,6 +23,9 @@ Core\Events.lua
 
 UI\MainFrame.lua
 
+Modules\Professions\ProfessionCore.lua
+Modules\Professions\ProfessionView.lua
+
 Modules\Donations\DonationCore.lua
 Modules\Donations\GoalEditor.lua
 Modules\Donations\OfficerView.lua

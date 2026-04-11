@@ -44,6 +44,11 @@ function Events:Register()
     pcall(function()
         GM:RegisterEvent("GUILD_BANK_LOG_UPDATE", Events.OnGuildBankLogUpdate)
     end)
+
+    -- Profession scanning
+    if GM.Professions and GM.Professions.RegisterEvents then
+        GM.Professions:RegisterEvents()
+    end
 end
 
 -- ── Handlers ─────────────────────────────────────────────────────────────────

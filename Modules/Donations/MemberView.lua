@@ -253,34 +253,53 @@ function MemberView:Render()
                 hfrac = (goalAmt > 0) and math.min(1, hr.amount / goalAmt) or (hr.amount > 0 and 1 or 0)
             end
             local hcolor = Utils.StatusColor(hfrac)
+            local isCurrent = (periodKey and hr.periodKey == periodKey)
 
-            local row = L:AddFrame(ROW_H)
+            local row = L:AddFrame(isCurrent and ROW_H + 4 or ROW_H)
             row:EnableMouse(true)
 
-            -- Background
+            -- Background — current week gets a brighter, tinted background
+            local bgR, bgG, bgB, bgA
+            if isCurrent then
+                bgR, bgG, bgB, bgA = hcolor[1], hcolor[2], hcolor[3], 0.15
+            else
+                bgR, bgG, bgB, bgA = 0.12, 0.12, 0.12, 0.3
+            end
             local bgTex = row:CreateTexture(nil, "BACKGROUND")
             bgTex:SetAllPoints()
             bgTex:SetTexture("Interface\\Buttons\\WHITE8X8")
-            bgTex:SetVertexColor(0.12, 0.12, 0.12, 0.3)
+            bgTex:SetVertexColor(bgR, bgG, bgB, bgA)
 
             -- Hover
-            row:SetScript("OnEnter", function() bgTex:SetVertexColor(0.18, 0.18, 0.18, 0.5) end)
-            row:SetScript("OnLeave", function() bgTex:SetVertexColor(0.12, 0.12, 0.12, 0.3) end)
+            row:SetScript("OnEnter", function() bgTex:SetVertexColor(bgR * 1.3, bgG * 1.3, bgB * 1.3, bgA + 0.15) end)
+            row:SetScript("OnLeave", function() bgTex:SetVertexColor(bgR, bgG, bgB, bgA) end)
 
-            -- Colour square (like officer view)
+            -- Left accent bar for current period
+            if isCurrent then
+                local accent = row:CreateTexture(nil, "BORDER")
+                accent:SetWidth(3)
+                accent:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+                accent:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 0)
+                accent:SetTexture("Interface\\Buttons\\WHITE8X8")
+                accent:SetVertexColor(hcolor[1], hcolor[2], hcolor[3], 0.8)
+            end
+
+            -- Colour square
             local square = row:CreateTexture(nil, "OVERLAY")
             square:SetSize(8, 8)
-            square:SetPoint("LEFT", row, "LEFT", 6, 0)
+            square:SetPoint("LEFT", row, "LEFT", 8, 0)
             square:SetTexture("Interface\\Buttons\\WHITE8X8")
             square:SetVertexColor(hcolor[1], hcolor[2], hcolor[3], 1)
 
             -- Period label
-            local periodFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-            periodFs:SetPoint("LEFT", row, "LEFT", 22, 0)
+            local periodFs = row:CreateFontString(nil, "OVERLAY", isCurrent and "GameFontHighlight" or "GameFontNormal")
+            periodFs:SetPoint("LEFT", row, "LEFT", 24, 0)
             periodFs:SetWidth(150)
             periodFs:SetJustifyH("LEFT")
             if hr.covered then
                 periodFs:SetText("|cff5fba47" .. Utils.PeriodLabel(hr.periodKey) .. "|r")
+            elseif isCurrent then
+                periodFs:SetText("|cffffffff" .. Utils.PeriodLabel(hr.periodKey) .. "  (current)|r")
             else
                 periodFs:SetText(Utils.PeriodLabel(hr.periodKey))
             end
