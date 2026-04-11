@@ -235,11 +235,22 @@ function Donations:OnCommReceived(message, _channel, sender)
         local _, version = message:match("^(%w+)|(.+)$")
         if version and sender then
             local realm = GetRealmName and GetRealmName() or "Unknown"
-            -- sender may be "Name" or "Name-Realm"
             local sn, sr = sender:match("^(.+)-(.+)$")
             sn = sn or sender
             sr = sr or realm
             Donations:SetAddonUser(Utils.MemberKey(sn, sr), version)
+
+            -- New member just came online — share our goal and donation data
+            -- so they don't have to wait for the next bank open or officer login.
+            C_Timer.After(2, function()
+                local goal = GM.DB:GetActiveGoal()
+                if goal and Donations.BroadcastGoal then
+                    Donations:BroadcastGoal(goal)
+                end
+                if Donations.BroadcastKnownTotals then
+                    Donations:BroadcastKnownTotals()
+                end
+            end)
         end
 
     elseif cmd == "GOAL_UPDATE" then

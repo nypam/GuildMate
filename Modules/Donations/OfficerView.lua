@@ -560,10 +560,35 @@ function OfficerView:_RenderGoalCard(L, parent, goal, periodKey)
             function() OfficerView:Render() end)
     end)
 
-    -- Delete Goal button (cross icon inside a standard button, below Edit)
+    -- Force Goal button (Guild Master only — pushes goal to all members)
+    local _, _, playerRankIndex = GetGuildInfo("player")
+    local forceBtn = nil
+    if playerRankIndex == 0 or GM.debugOfficer then
+        forceBtn = CreateFrame("Button", nil, cardBg, "UIPanelButtonTemplate")
+        forceBtn:SetSize(90, 22)
+        forceBtn:SetPoint("RIGHT", editBtn, "LEFT", -4, 0)
+        forceBtn:SetText("Force Goal")
+        forceBtn:SetScript("OnEnter", function(btn)
+            GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Force Goal Sync")
+            GameTooltip:AddLine("Broadcast the active goal to all online guild members.", 0.8, 0.8, 0.8)
+            GameTooltip:AddLine("Use this if members don't see the goal.", 1, 0.8, 0.3)
+            GameTooltip:Show()
+        end)
+        forceBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        forceBtn:SetScript("OnClick", function()
+            PlaySound(856)
+            GM.Donations:BroadcastGoal(goal)
+            GM.Donations:BroadcastKnownTotals()
+            GM:Print("|cff4A90D9GuildMate:|r Goal and donation data broadcasted to guild.")
+        end)
+    end
+
+    -- Delete Goal button (cross icon inside a standard button)
+    local deleteAnchor = (playerRankIndex == 0 or GM.debugOfficer) and forceBtn or editBtn
     local deleteBtn = CreateFrame("Button", nil, cardBg, "UIPanelButtonTemplate")
     deleteBtn:SetSize(30, 22)
-    deleteBtn:SetPoint("RIGHT", editBtn, "LEFT", -4, 0)
+    deleteBtn:SetPoint("RIGHT", deleteAnchor, "LEFT", -4, 0)
     deleteBtn:SetText("")
 
     local delIcon = deleteBtn:CreateTexture(nil, "OVERLAY")

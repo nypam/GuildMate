@@ -4,6 +4,26 @@ All notable changes to GuildMate will be documented in this file.
 
 ## [Unreleased]
 
+## [v0.3.1] - 2026-04-11
+
+### Added
+- **Professions Phase 2** — recipe scanning with icons, reagents, and inventory check
+- Recipe icons captured via GetTradeSkillIcon during tradeskill window scan
+- Reagent icons captured via GetTradeSkillReagentInfo texture return
+- Item tooltips on recipe hover (via stored item links)
+- Reagent tooltips on hover in expanded recipe detail
+- Bag inventory count per reagent (green/orange/red colour-coded)
+- Click any recipe to expand and see required materials
+- Recipe search field with debounced filtering
+- Auto-broadcast goal + donation data when a new addon user sends HELLO (fixes new members not seeing the goal)
+- TradeSkillFrame OnShow hook as fallback for recipe scanning
+
+### Fixed
+- Recipe icons showing question marks — GetRecipeList wasn't passing icon/itemLink to the view
+- Old recipes without icons now get re-scanned when tradeskill window is opened
+- Reagents without stored icons get re-scanned automatically
+- New guild members not receiving the active goal until next officer login
+
 ## [v0.3.0] - 2026-04-11
 
 ### Added

@@ -120,6 +120,202 @@ function Professions:GetOverview()
     return result
 end
 
+-- ── Recipe DB helpers ─────────────────────────────────────────────────────────
+
+local function _EnsureRecipeDB()
+    if not GM.DB.sv.recipes then
+        GM.DB.sv.recipes = {}
+    end
+    return GM.DB.sv.recipes
+end
+
+-- Get all recipes for a profession. Returns { [recipeName] = { crafters = {memberKey,...}, reagents = { {name,count},... } }, ... }
+function Professions:GetRecipes(professionName)
+    local db = _EnsureRecipeDB()
+    return db[professionName] or {}
+end
+
+-- Get sorted recipe list for a profession.
+-- Returns { { name, crafters = {}, reagents = {}, hasCrafter }, ... }
+function Professions:GetRecipeList(professionName)
+    local db = _EnsureRecipeDB()
+    local profRecipes = db[professionName] or {}
+    local result = {}
+
+    for recipeName, data in pairs(profRecipes) do
+        result[#result + 1] = {
+            name       = recipeName,
+            icon       = data.icon,
+            itemLink   = data.itemLink,
+            crafters   = data.crafters or {},
+            reagents   = data.reagents or {},
+            hasCrafter = data.crafters and #data.crafters > 0,
+        }
+    end
+
+    -- Sort: recipes with crafters first (green), then alphabetical
+    table.sort(result, function(a, b)
+        if a.hasCrafter ~= b.hasCrafter then return a.hasCrafter end
+        return a.name < b.name
+    end)
+
+    return result
+end
+
+-- ── Recipe scanning ──────────────────────────────────────────────────────────
+
+function Professions:ScanRecipes()
+    -- Only works when tradeskill window is open
+    local getNumTS = _G["GetNumTradeSkills"]
+    local getTSInfo = _G["GetTradeSkillInfo"]
+    local getTSReagent = _G["GetTradeSkillReagentInfo"]
+    local getNumReagents = _G["GetTradeSkillNumReagents"]
+    local getTSIcon = _G["GetTradeSkillIcon"]
+    local getTSItemLink = _G["GetTradeSkillItemLink"]
+
+    if not getNumTS or not getTSInfo then return end
+
+    local numSkills = getNumTS()
+    if not numSkills or numSkills == 0 then return end
+
+    -- Determine which profession is open by reading the first header or the tradeskill name
+    local profName = nil
+    if _G["GetTradeSkillLine"] then
+        profName = GetTradeSkillLine()
+    end
+    if not profName or not ALL_PROFESSIONS[profName] then
+        -- Fallback: try reading first header
+        for i = 1, numSkills do
+            local name, skillType = getTSInfo(i)
+            if skillType == "header" and ALL_PROFESSIONS[name] then
+                profName = name
+                break
+            end
+        end
+    end
+    if not profName then return end
+
+    local playerName = UnitName("player") or "Unknown"
+    local realm = GetRealmName and GetRealmName() or "Unknown"
+    local memberKey = Utils.MemberKey(playerName, realm)
+
+    local db = _EnsureRecipeDB()
+    if not db[profName] then db[profName] = {} end
+
+    local changed = false
+
+    for i = 1, numSkills do
+        local name, skillType = getTSInfo(i)
+        if name and skillType and skillType ~= "header" and skillType ~= "subheader" then
+
+            -- Ensure recipe entry exists
+            if not db[profName][name] then
+                db[profName][name] = { crafters = {}, reagents = {} }
+                changed = true
+            end
+
+            local recipe = db[profName][name]
+
+            -- Always refresh icon + link when window is open (fills in old data)
+            if getTSIcon then
+                local newIcon = getTSIcon(i)
+                if newIcon and newIcon ~= recipe.icon then
+                    recipe.icon = newIcon
+                    changed = true
+                end
+            end
+
+            if getTSItemLink then
+                local newLink = getTSItemLink(i)
+                if newLink and newLink ~= recipe.itemLink then
+                    recipe.itemLink = newLink
+                    if GetItemInfo then GetItemInfo(newLink) end
+                    changed = true
+                end
+            end
+
+
+            -- Pre-cache reagent items too (so icons resolve on first view)
+            if getNumReagents and getTSReagent then
+                local nr = getNumReagents(i)
+                if nr then
+                    for j = 1, nr do
+                        local rn = getTSReagent(i, j)
+                        if rn then GetItemInfo(rn) end
+                    end
+                end
+            end
+
+            -- Add this player as a crafter if not already listed
+            local alreadyCrafter = false
+            for _, ck in ipairs(recipe.crafters) do
+                if ck == memberKey then alreadyCrafter = true; break end
+            end
+            if not alreadyCrafter then
+                recipe.crafters[#recipe.crafters + 1] = memberKey
+                changed = true
+            end
+
+            -- Scan reagents (rescan if empty or missing icons from old data)
+            local needsRescan = #recipe.reagents == 0
+            if not needsRescan and #recipe.reagents > 0 and not recipe.reagents[1].icon then
+                recipe.reagents = {}
+                needsRescan = true
+            end
+            if needsRescan and getNumReagents and getTSReagent then
+                local numReagents = getNumReagents(i)
+                if numReagents and numReagents > 0 then
+                    for j = 1, numReagents do
+                        local reagentName, reagentTex, reagentCount = getTSReagent(i, j)
+                        if reagentName then
+                            recipe.reagents[#recipe.reagents + 1] = {
+                                name  = reagentName,
+                                count = reagentCount or 1,
+                                icon  = reagentTex,
+                            }
+                        end
+                    end
+                    changed = true
+                end
+            end
+        end
+    end
+
+    if changed then
+        -- Broadcast recipe data
+        self:BroadcastRecipes(memberKey, profName)
+        GM.MainFrame:RefreshActiveView()
+    end
+end
+
+-- ── Recipe comm: broadcast ───────────────────────────────────────────────────
+
+function Professions:BroadcastRecipes(memberKey, profName)
+    local db = _EnsureRecipeDB()
+    local profRecipes = db[profName]
+    if not profRecipes then return end
+
+    -- Build list of recipes this member can craft
+    local myRecipes = {}
+    for recipeName, data in pairs(profRecipes) do
+        for _, ck in ipairs(data.crafters) do
+            if ck == memberKey then
+                myRecipes[#myRecipes + 1] = recipeName
+                break
+            end
+        end
+    end
+
+    if #myRecipes == 0 then return end
+
+    -- RECIPE_UPDATE|memberKey|profName|recipe1;recipe2;recipe3
+    -- AceComm handles splitting long messages automatically
+    local msg = string.format("RECIPE_UPDATE|%s|%s|%s",
+        memberKey, profName, table.concat(myRecipes, ";"))
+
+    GM:SendCommMessage("GuildMate", msg, "GUILD")
+end
+
 -- ── Scanning own professions ─────────────────────────────────────────────────
 
 function Professions:ScanSelf()
@@ -179,6 +375,35 @@ end
 
 function Professions:OnCommReceived(message, _channel, sender)
     local cmd = message:match("^(%w+)")
+
+    if cmd == "RECIPE_UPDATE" then
+        -- RECIPE_UPDATE|memberKey|profName|recipe1;recipe2;recipe3
+        local _, memberKey, profName, recipeStr = message:match("^(%w+)|(.+)|(.+)|(.+)$")
+        if not memberKey or not profName or not recipeStr then return true end
+
+        local db = _EnsureRecipeDB()
+        if not db[profName] then db[profName] = {} end
+
+        for recipeName in recipeStr:gmatch("[^;]+") do
+            if recipeName and recipeName ~= "" then
+                if not db[profName][recipeName] then
+                    db[profName][recipeName] = { crafters = {}, reagents = {} }
+                end
+                -- Add sender as crafter if not already listed
+                local already = false
+                for _, ck in ipairs(db[profName][recipeName].crafters) do
+                    if ck == memberKey then already = true; break end
+                end
+                if not already then
+                    db[profName][recipeName].crafters[#db[profName][recipeName].crafters + 1] = memberKey
+                end
+            end
+        end
+
+        GM.MainFrame:RefreshActiveView()
+        return true
+    end
+
     if cmd ~= "PROF_UPDATE" then return false end
 
     -- PROF_UPDATE|memberKey|timestamp|Alchemy:375:375,Mining:300:375
@@ -227,16 +452,37 @@ function Professions:RegisterEvents()
         Professions:ScanSelf()
     end)
 
-    -- Re-scan when tradeskill window opens (catches level-ups)
+    -- Re-scan when tradeskill window opens (catches level-ups + recipes)
     pcall(function()
         GM:RegisterEvent("TRADE_SKILL_SHOW", function()
-            C_Timer.After(0.5, function() Professions:ScanSelf() end)
+            C_Timer.After(0.5, function()
+                Professions:ScanSelf()
+                Professions:ScanRecipes()
+            end)
         end)
+    end)
+
+    -- Fallback: hook TradeSkillFrame if event doesn't fire (TBC Anniversary)
+    C_Timer.After(3, function()
+        if _G["TradeSkillFrame"] then
+            if not TradeSkillFrame._gmHooked then
+                TradeSkillFrame._gmHooked = true
+                TradeSkillFrame:HookScript("OnShow", function()
+                    C_Timer.After(0.5, function()
+                        Professions:ScanSelf()
+                        Professions:ScanRecipes()
+                    end)
+                end)
+            end
+        end
     end)
 
     pcall(function()
         GM:RegisterEvent("TRADE_SKILL_UPDATE", function()
-            C_Timer.After(0.5, function() Professions:ScanSelf() end)
+            C_Timer.After(0.5, function()
+                Professions:ScanSelf()
+                Professions:ScanRecipes()
+            end)
         end)
     end)
 

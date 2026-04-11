@@ -393,5 +393,255 @@ function ProfessionView:RenderProfession(professionName)
         end)
     end
 
+    -- ── Recipes section ──────────────────────────────────────────────────────
+    self:_RenderRecipes(L, parent, professionName)
+
     L:Finish()
+end
+
+-- ── Recipe list ──────────────────────────────────────────────────────────────
+
+local _recipeSearchText = ""
+local _selectedRecipe = nil
+
+function ProfessionView:_RenderRecipes(L, parent, professionName)
+    L:AddSpacer(14)
+    L:AddText("|cffccccccRECIPES|r", 12, GameFontHighlight)
+    L:AddSpacer(4)
+
+    local recipes = GM.Professions:GetRecipeList(professionName)
+
+    if #recipes == 0 then
+        L:AddText("|cffaaaaaaNo recipes scanned yet. Open your " .. professionName .. " tradeskill window to scan.|r", 11)
+        return
+    end
+
+    -- Recipe search
+    local searchRow = L:AddRow(24)
+    local recSearchBox = CreateFrame("EditBox", "GuildMateRecipeSearchBox", searchRow, "InputBoxTemplate")
+    recSearchBox:SetSize(200, 20)
+    recSearchBox:SetPoint("RIGHT", searchRow, "RIGHT", -6, 0)
+    recSearchBox:SetTextInsets(4, 4, 0, 0)
+    recSearchBox:SetAutoFocus(false)
+    recSearchBox:EnableMouse(true)
+    recSearchBox:SetText(_recipeSearchText)
+    recSearchBox:SetCursorPosition(0)
+
+    local recSearchLabel = searchRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    recSearchLabel:SetPoint("RIGHT", recSearchBox, "LEFT", -8, 0)
+    recSearchLabel:SetText("|cffaaaaaa" .. GM.L["SEARCH"] .. "|r")
+
+    -- Count label
+    local countFs = searchRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    countFs:SetPoint("LEFT", searchRow, "LEFT", 0, 0)
+    countFs:SetText("|cffaaaaaa" .. #recipes .. " recipes|r")
+
+    local recSearchTimer = nil
+    recSearchBox:SetScript("OnTextChanged", function(self, userInput)
+        if not userInput then return end
+        _recipeSearchText = self:GetText():lower()
+        if recSearchTimer then recSearchTimer:Cancel() end
+        recSearchTimer = C_Timer.NewTimer(0.3, function()
+            recSearchTimer = nil
+            ProfessionView:RenderProfession(professionName)
+            C_Timer.After(0, function()
+                local box = _G["GuildMateRecipeSearchBox"]
+                if box then
+                    box:SetFocus()
+                    box:SetCursorPosition(#box:GetText())
+                end
+            end)
+        end)
+    end)
+    recSearchBox:SetScript("OnEscapePressed", function(self)
+        _recipeSearchText = ""
+        self:SetText("")
+        self:ClearFocus()
+        ProfessionView:RenderProfession(professionName)
+    end)
+    recSearchBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+
+    L:AddSpacer(4)
+
+    -- Filter recipes by search
+    local filtered = recipes
+    if _recipeSearchText ~= "" then
+        filtered = {}
+        for _, r in ipairs(recipes) do
+            if r.name:lower():find(_recipeSearchText, 1, true) then
+                filtered[#filtered + 1] = r
+            end
+        end
+    end
+
+    if #filtered == 0 then
+        L:AddText("|cffaaaaaaNo recipes match your search.|r", 11)
+        return
+    end
+
+    -- Roster lookup for display names
+    local rosterLookup = GM.Donations and GM.Donations:GetRoster() or {}
+
+    for _, recipe in ipairs(filtered) do
+        local hasCrafter = recipe.hasCrafter
+        local isSelected = (_selectedRecipe == recipe.name)
+
+        local row = L:AddFrame(24)
+        row:EnableMouse(true)
+
+        local bgTex = row:CreateTexture(nil, "BACKGROUND")
+        bgTex:SetAllPoints()
+        bgTex:SetTexture("Interface\\Buttons\\WHITE8X8")
+        if isSelected then
+            bgTex:SetVertexColor(0.15, 0.28, 0.45, 0.5)
+        else
+            bgTex:SetVertexColor(0.10, 0.10, 0.10, 0.3)
+        end
+
+        row:SetScript("OnEnter", function()
+            if not isSelected then bgTex:SetVertexColor(0.15, 0.15, 0.15, 0.5) end
+        end)
+        row:SetScript("OnLeave", function()
+            if not isSelected then bgTex:SetVertexColor(0.10, 0.10, 0.10, 0.3) end
+        end)
+
+        -- Click to select/deselect
+        local recipeName = recipe.name
+        row:SetScript("OnMouseUp", function()
+            PlaySound(856)
+            if _selectedRecipe == recipeName then
+                _selectedRecipe = nil
+            else
+                _selectedRecipe = recipeName
+            end
+            ProfessionView:RenderProfession(professionName)
+        end)
+
+        -- Recipe icon (stored during scan via GetTradeSkillIcon)
+        local recipeIcon = row:CreateTexture(nil, "ARTWORK")
+        recipeIcon:SetSize(20, 20)
+        recipeIcon:SetPoint("LEFT", row, "LEFT", 6, 0)
+        recipeIcon:SetTexture(recipe.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+
+        -- Tooltip on icon hover
+        local itemLink = recipe.itemLink
+        row:SetScript("OnEnter", function()
+            if not isSelected then bgTex:SetVertexColor(0.15, 0.15, 0.15, 0.5) end
+            if itemLink then
+                GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
+                GameTooltip:SetHyperlink(itemLink)
+                GameTooltip:Show()
+            end
+        end)
+        row:SetScript("OnLeave", function()
+            if not isSelected then bgTex:SetVertexColor(0.10, 0.10, 0.10, 0.3) end
+            GameTooltip:Hide()
+        end)
+
+        -- Status square (green = guild can craft, grey = nobody)
+        local square = row:CreateTexture(nil, "OVERLAY")
+        square:SetSize(8, 8)
+        square:SetPoint("LEFT", recipeIcon, "RIGHT", 4, 0)
+        square:SetTexture("Interface\\Buttons\\WHITE8X8")
+        if hasCrafter then
+            square:SetVertexColor(0.2, 0.8, 0.2, 1)
+        else
+            square:SetVertexColor(0.4, 0.4, 0.4, 1)
+        end
+
+        -- Recipe name
+        local nameFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        nameFs:SetPoint("LEFT", square, "RIGHT", 4, 0)
+        nameFs:SetWidth(220)
+        nameFs:SetJustifyH("LEFT")
+        if hasCrafter then
+            nameFs:SetText(recipe.name)
+        else
+            nameFs:SetText("|cff666666" .. recipe.name .. "|r")
+        end
+
+        -- Crafter names (right side)
+        if hasCrafter then
+            local crafterNames = {}
+            for _, ck in ipairs(recipe.crafters) do
+                local info = rosterLookup[ck]
+                local displayName = info and info.name or ck
+                if info then
+                    local cc = Utils.ClassColor(info.classFilename)
+                    local hex = string.format("|cff%02x%02x%02x", cc[1]*255, cc[2]*255, cc[3]*255)
+                    crafterNames[#crafterNames + 1] = hex .. displayName .. "|r"
+                else
+                    crafterNames[#crafterNames + 1] = displayName
+                end
+            end
+            local crafterFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            crafterFs:SetPoint("RIGHT", row, "RIGHT", -8, 0)
+            crafterFs:SetWidth(200)
+            crafterFs:SetJustifyH("RIGHT")
+            crafterFs:SetText(table.concat(crafterNames, ", "))
+        end
+
+        -- Expanded detail: reagents with inventory check
+        if isSelected and #recipe.reagents > 0 then
+            for _, reagent in ipairs(recipe.reagents) do
+                local detailRow = L:AddFrame(24)
+                Utils.SetFrameColor(detailRow, 0.08, 0.15, 0.25, 0.4)
+
+                -- Reagent icon (stored during scan via GetTradeSkillReagentInfo)
+                local reagentTex = detailRow:CreateTexture(nil, "ARTWORK")
+                reagentTex:SetSize(16, 16)
+                reagentTex:SetPoint("LEFT", detailRow, "LEFT", 34, 0)
+                reagentTex:SetTexture(reagent.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+
+                -- Reagent tooltip on hover
+                local rName = reagent.name
+                detailRow:EnableMouse(true)
+                detailRow:SetScript("OnEnter", function()
+                    GameTooltip:SetOwner(detailRow, "ANCHOR_RIGHT")
+                    local _, rLink = GetItemInfo(rName)
+                    if rLink then
+                        GameTooltip:SetHyperlink(rLink)
+                    else
+                        GameTooltip:SetText(rName)
+                    end
+                    GameTooltip:Show()
+                end)
+                detailRow:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+                -- Reagent name
+                local reagentFs = detailRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                reagentFs:SetPoint("LEFT", reagentTex, "RIGHT", 6, 0)
+                reagentFs:SetWidth(170)
+                reagentFs:SetJustifyH("LEFT")
+                reagentFs:SetText(reagent.name)
+
+                -- Required count
+                local countReqFs = detailRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                countReqFs:SetPoint("LEFT", detailRow, "LEFT", 260, 0)
+                countReqFs:SetText("|cffaaaaaa\195\151" .. reagent.count .. "|r")
+
+                -- Inventory check
+                local inBags = 0
+                if GetItemCount then
+                    inBags = GetItemCount(reagent.name) or 0
+                end
+
+                local invFs = detailRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                invFs:SetPoint("LEFT", detailRow, "LEFT", 300, 0)
+                if inBags >= reagent.count then
+                    invFs:SetText("|cff5fba47" .. inBags .. " in bags|r")
+                elseif inBags > 0 then
+                    invFs:SetText("|cffd9a400" .. inBags .. " in bags|r")
+                else
+                    invFs:SetText("|cff8e0e130 in bags|r")
+                end
+            end
+        elseif isSelected and #recipe.reagents == 0 then
+            local noDataRow = L:AddFrame(22)
+            Utils.SetFrameColor(noDataRow, 0.08, 0.15, 0.25, 0.4)
+            local noDataFs = noDataRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            noDataFs:SetPoint("LEFT", noDataRow, "LEFT", 34, 0)
+            noDataFs:SetText("|cffaaaaaaReagent data not yet scanned. Open your tradeskill window.|r")
+        end
+    end
 end
