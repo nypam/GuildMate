@@ -202,9 +202,11 @@ end
 function Donations:BroadcastGoal(goal)
     if not goal then return end
     local ranks = _SerializeRanks(goal.targetRanks)
-    local msg = string.format("GOAL_UPDATE|%d|%d|%s|%s|%s|%d",
+    -- Simple format: GOAL|id|amount|period|ranks|epoch
+    -- Dropped createdBy to avoid special character parsing issues
+    local msg = string.format("GOAL|%d|%d|%s|%s|%d",
         goal.id, goal.goldAmount, goal.period,
-        goal.createdBy or "Unknown", ranks, goal.startEpoch or 0)
+        ranks, goal.startEpoch or 0)
     GM:SendCommMessage("GuildMate", msg, "GUILD")
 end
 
@@ -253,20 +255,24 @@ function Donations:OnCommReceived(message, _channel, sender)
             end)
         end
 
-    elseif cmd == "GOAL_UPDATE" then
-        -- GOAL_UPDATE|id|goldAmount|period|createdBy|ranks|startEpoch
-        -- createdBy may contain hyphens/special chars, so use [^|]+ for it
-        local _, idStr, amountStr, period, createdBy, ranksStr, epochStr =
-            message:match("^(%w+)|(%d+)|(%d+)|([^|]+)|([^|]+)|([^|]+)|(%d+)$")
+    elseif cmd == "GOAL" or cmd == "GOAL_UPDATE" then
+        -- New format: GOAL|id|amount|period|ranks|epoch
+        -- Old format: GOAL_UPDATE|id|amount|period|createdBy|ranks|epoch
+        local idStr, amountStr, period, ranksStr, epochStr
 
-        -- Debug: log what we received (remove after fixing)
-        GM:Print(string.format("|cff4A90D9GuildMate debug:|r GOAL_UPDATE received: id=%s amt=%s period=%s createdBy=%s ranks=%s epoch=%s",
-            tostring(idStr), tostring(amountStr), tostring(period),
-            tostring(createdBy), tostring(ranksStr), tostring(epochStr)))
+        if cmd == "GOAL" then
+            _, idStr, amountStr, period, ranksStr, epochStr =
+                message:match("^(%w+)|(%d+)|(%d+)|(%w+)|([^|]+)|(%d+)$")
+        else
+            -- Legacy: skip createdBy field
+            local _, _id, _amt, _per, _cb, _rk, _ep =
+                message:match("^(%w+)|(%d+)|(%d+)|([^|]+)|([^|]+)|([^|]+)|(%d+)$")
+            idStr, amountStr, period, ranksStr, epochStr = _id, _amt, _per, _rk, _ep
+        end
 
-        local id        = tonumber(idStr)
-        local amount    = tonumber(amountStr)
-        local epoch     = tonumber(epochStr)
+        local id     = tonumber(idStr)
+        local amount = tonumber(amountStr)
+        local epoch  = tonumber(epochStr)
 
         if id and amount and period then
             local existing = GM.DB:GetActiveGoal()
@@ -279,12 +285,14 @@ function Donations:OnCommReceived(message, _channel, sender)
                     period      = period,
                     targetRanks = _DeserializeRanks(ranksStr or ""),
                     active      = true,
-                    createdBy   = createdBy or "Unknown",
+                    createdBy   = "Unknown",
                     startEpoch  = epoch or 0,
                 }
                 GM.DB:DeactivateAllGoals()
                 GM.DB:SaveGoal(goal)
                 GM.MainFrame:RefreshActiveView()
+                GM:Print("|cff4A90D9GuildMate:|r Received donation goal: " ..
+                    Utils.FormatMoneyShort(amount) .. " " .. period)
             end
         end
     end

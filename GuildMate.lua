@@ -154,6 +154,13 @@ function GM:SlashCommand(input)
         self:Print("|cff4A90D9GuildMate:|r Scan saved. Do /reload then open:")
         self:Print("|cffffd700WTF/Account/<name>/SavedVariables/GuildMate.lua|r")
         self:Print("Look for debugScan = { ... } near the top.")
+    elseif input == "commtest" then
+        -- Send a test message and enable logging to verify comm works
+        self._commDebug = true
+        self:Print("|cff4A90D9GuildMate:|r Comm debug ON. Sending PING to guild...")
+        GM:SendCommMessage("GuildMate", "PING|" .. (UnitName("player") or "?"), "GUILD")
+        self:Print("Waiting for responses... (type /gm commtest again to turn off)")
+
     elseif input == "sync" then
         self:Print("|cff4A90D9GuildMate:|r Sending sync request to guild...")
 
@@ -435,6 +442,23 @@ end
 function GM:OnCommReceived(prefix, message, channel, sender)
     if prefix ~= "GuildMate" then return end
     if sender == UnitName("player") then return end  -- ignore our own messages
+
+    -- Comm debug logging
+    if self._commDebug then
+        local cmd = message and message:match("^(%w+)") or "?"
+        self:Print(string.format("|cff888888[comm in]|r %s from %s (%d bytes)", cmd, tostring(sender), #message))
+    end
+
+    -- PING/PONG for comm testing
+    local cmd = message and message:match("^(%w+)")
+    if cmd == "PING" then
+        GM:SendCommMessage("GuildMate", "PONG|" .. (UnitName("player") or "?"), "GUILD")
+        return
+    elseif cmd == "PONG" then
+        local _, who = message:match("^(%w+)|(.+)$")
+        self:Print("|cff5fba47[comm]|r PONG received from " .. tostring(who or sender))
+        return
+    end
 
     if GM.Donations and GM.Donations.OnCommReceived then
         GM.Donations:OnCommReceived(message, channel, sender)
