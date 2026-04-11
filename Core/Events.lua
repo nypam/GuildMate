@@ -93,8 +93,7 @@ function Events.OnPlayerLogin()
 
         if donated < goal.goldAmount then
             local remaining = goal.goldAmount - donated
-            GM:Print(string.format(
-                "|cffd9a400Reminder:|r You still need to donate %s to meet the %s goal of %s.",
+            GM:Print(string.format(GM.L["LOGIN_REMINDER"],
                 GM.Utils.FormatMoneyShort(remaining),
                 goal.period,
                 GM.Utils.FormatMoneyShort(goal.goldAmount)))

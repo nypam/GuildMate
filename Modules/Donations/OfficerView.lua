@@ -60,7 +60,7 @@ function OfficerView:Render()
     local titleFs = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     titleFs:SetFont(Utils.Font(GameFontHighlight, 16))
     titleFs:SetPoint("LEFT", headerRow, "LEFT", 0, 0)
-    titleFs:SetText("|cffffffffDONATIONS|r")
+    titleFs:SetText("|cffffffff" .. GM.L["DONATIONS"] .. "|r")
 
     local settingsBtn = CreateFrame("Button", nil, headerRow, "UIPanelButtonTemplate")
     settingsBtn:SetSize(30, 24)
@@ -76,7 +76,7 @@ function OfficerView:Render()
     end)
     settingsBtn:SetScript("OnEnter", function(btn)
         GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
-        GameTooltip:SetText("Settings")
+        GameTooltip:SetText(GM.L["SETTINGS"])
         GameTooltip:Show()
     end)
     settingsBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -84,7 +84,7 @@ function OfficerView:Render()
     local newGoalBtn = CreateFrame("Button", nil, headerRow, "UIPanelButtonTemplate")
     newGoalBtn:SetSize(110, 24)
     newGoalBtn:SetPoint("RIGHT", settingsBtn, "LEFT", -6, 0)
-    newGoalBtn:SetText("+ New Goal")
+    newGoalBtn:SetText(GM.L["NEW_GOAL"])
     newGoalBtn:SetScript("OnClick", function()
         PlaySound(856)
         GM.GoalEditor:Open(nil,
@@ -99,7 +99,7 @@ function OfficerView:Render()
     if addonCount > 0 then
         local addonFs = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         addonFs:SetPoint("RIGHT", newGoalBtn, "LEFT", -10, 0)
-        addonFs:SetText("|TInterface\\Icons\\INV_Misc_Orb_03:12:12|t |cffaaaaaa" .. addonCount .. " member" .. (addonCount == 1 and "" or "s") .. " with addon|r")
+        addonFs:SetText("|TInterface\\Icons\\INV_Misc_Orb_03:12:12|t |cffaaaaaa" .. string.format(GM.L["MEMBERS_WITH_ADDON"], addonCount, addonCount == 1 and "" or "s") .. "|r")
     end
 
     -- Period line (below title)
@@ -112,7 +112,7 @@ function OfficerView:Render()
         self:_RenderGoalCard(L, parent, goal, periodKey)
     else
         L:AddSpacer(4)
-        L:AddText("|cffaaaaaa No active donation goal. Click |r|cffffd700+ New Goal|r|cffaaaaaa to create one.|r", 12)
+        L:AddText("|cffaaaaaa" .. GM.L["NO_GOAL"] .. "|r", 12)
     end
 
     L:AddSpacer(8)
@@ -121,7 +121,7 @@ function OfficerView:Render()
     local toolsStartY = L:GetY()
     L:SetMargins(CONTAINER_PAD, CONTAINER_PAD)
     L:AddSpacer(CONTAINER_PAD)
-    L:AddText("|cffccccccTOOLS|r", 12, GameFontHighlight)
+    L:AddText("|cffcccccc" .. GM.L["TOOLS"] .. "|r", 12, GameFontHighlight)
     L:AddSpacer(4)
     self:_RenderActionBar(L, parent, goal)
     L:AddSpacer(CONTAINER_PAD)
@@ -189,8 +189,8 @@ function OfficerView:Render()
         return btn
     end
 
-    MakeTab("Member Status", "roster", 0)
-    MakeTab("Logs", "logs", 130)
+    MakeTab(GM.L["MEMBER_STATUS_TAB"], "roster", 0)
+    MakeTab(GM.L["LOGS"], "logs", 130)
 
     L:AddSpacer(8)
 
@@ -214,9 +214,9 @@ function OfficerView:_RenderRosterTab(L, parent, goal, periodKey)
     -- Filters
     local filterRow = L:AddRow(26)
     local filterDefs = {
-        { key = "unpaid",  label = "Unpaid",          color = {0.557, 0.055, 0.075} },
-        { key = "partial", label = "Partially Paid",  color = {0.851, 0.608, 0.0}   },
-        { key = "paid",    label = "Paid",            color = {0.373, 0.729, 0.275} },
+        { key = "unpaid",  label = GM.L["FILTER_UNPAID"],   color = {0.557, 0.055, 0.075} },
+        { key = "partial", label = GM.L["FILTER_PARTIAL"], color = {0.851, 0.608, 0.0}   },
+        { key = "paid",    label = GM.L["FILTER_PAID"],    color = {0.373, 0.729, 0.275} },
     }
     local fx = 0
     for _, def in ipairs(filterDefs) do
@@ -248,7 +248,7 @@ function OfficerView:_RenderRosterTab(L, parent, goal, periodKey)
 
     local searchLabel = filterRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     searchLabel:SetPoint("RIGHT", searchBox, "LEFT", -8, 0)
-    searchLabel:SetText("|cffaaaaaaSearch:|r")
+    searchLabel:SetText("|cffaaaaaa" .. GM.L["SEARCH"] .. "|r")
 
     local searchTimer = nil
     searchBox:SetScript("OnTextChanged", function(self, userInput)
@@ -316,7 +316,7 @@ function OfficerView:_RenderRosterTab(L, parent, goal, periodKey)
     end)
 
     if #rows == 0 then
-        L:AddText("|cffaaaaaa No members match the current filter.|r", 12)
+        L:AddText("|cffaaaaaa" .. GM.L["NO_MEMBERS_MATCH"] .. "|r", 12)
     else
         for _, row in ipairs(rows) do
             self:_RenderMemberRow(L, parent, row)
@@ -412,7 +412,7 @@ function OfficerView:_RenderLogsTab(L, parent)
     end)
 
     if #entries == 0 then
-        L:AddText("|cffaaaaaa No donation records found.|r", 12)
+        L:AddText("|cffaaaaaa" .. GM.L["NO_DONATION_RECORDS"] .. "|r", 12)
         return
     end
 
@@ -471,9 +471,9 @@ function OfficerView:_RenderGoalCard(L, parent, goal, periodKey)
     L:AddSpacer(CONTAINER_PAD)
 
     -- Goal amount + period
-    L:AddText(string.format("|cffd4af37%s|r per member  ·  %s",
-        Utils.FormatMoneyShort(goal.goldAmount),
-        goal.period:gsub("^%l", string.upper)), 12)
+    local periodWord = goal.period == "monthly" and GM.L["MONTHLY"] or GM.L["WEEKLY"]
+    L:AddText(string.format(GM.L["GOAL_PER_MEMBER"],
+        Utils.FormatMoneyShort(goal.goldAmount), periodWord), 12)
 
     -- Ranks on a separate line
     local numRanks  = GuildControlGetNumRanks and GuildControlGetNumRanks() or 0
@@ -483,14 +483,14 @@ function OfficerView:_RenderGoalCard(L, parent, goal, periodKey)
             rankNames[#rankNames + 1] = GuildControlGetRankName and GuildControlGetRankName(i + 1) or ("Rank "..i)
         end
     end
-    L:AddText("|cffaaaaaaRanks: " ..
-        (#rankNames > 0 and table.concat(rankNames, ", ") or "None") .. "|r", 11)
+    L:AddText("|cffaaaaaa" .. string.format(GM.L["RANKS_LABEL"],
+        #rankNames > 0 and table.concat(rankNames, ", ") or GM.L["RANKS_NONE"]) .. "|r", 11)
 
     -- Time remaining
     local secsLeft = Utils.SecondsRemainingInPeriod(goal.period)
     local daysLeft = math.floor(secsLeft / 86400)
-    L:AddText(string.format("|cffaaaaaa%d day%s remaining|r",
-        daysLeft, daysLeft == 1 and "" or "s"), 11)
+    L:AddText("|cffaaaaaa" .. string.format(GM.L["DAYS_REMAINING"],
+        daysLeft, daysLeft == 1 and "" or "s") .. "|r", 11)
 
     -- Space before progress bar
     L:AddSpacer(10)
@@ -525,7 +525,7 @@ function OfficerView:_RenderGoalCard(L, parent, goal, periodKey)
 
     local barText = barRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     barText:SetPoint("LEFT", barRow, "LEFT", 6, 0)
-    barText:SetText(string.format("%d / %d members met goal  (%d%%)", met, total, math.floor(frac * 100)))
+    barText:SetText(string.format(GM.L["MEMBERS_MET_GOAL"], met, total, math.floor(frac * 100)))
     barText:SetTextColor(1, 1, 1, 1)
 
     barRow:SetScript("OnSizeChanged", function(_, w)
@@ -538,7 +538,7 @@ function OfficerView:_RenderGoalCard(L, parent, goal, periodKey)
     -- Total collected this period
     local collectTarget = total * goal.goldAmount
     local collectPct = collectTarget > 0 and math.floor(totalDonated / collectTarget * 100) or 0
-    L:AddText(string.format("|cffaaaaaaCollected this period:|r  |cffd4af37%s|r / %s  |cffaaaaaa(%d%%)|r",
+    L:AddText(string.format("|cffaaaaaa" .. GM.L["COLLECTED_THIS_PERIOD"] .. "|r  |cffd4af37%s|r / %s  |cffaaaaaa(%d%%)|r",
         Utils.FormatMoneyShort(totalDonated),
         Utils.FormatMoneyShort(collectTarget),
         collectPct), 11)
@@ -552,7 +552,7 @@ function OfficerView:_RenderGoalCard(L, parent, goal, periodKey)
     local editBtn = CreateFrame("Button", nil, cardBg, "UIPanelButtonTemplate")
     editBtn:SetSize(90, 22)
     editBtn:SetPoint("TOPRIGHT", cardBg, "TOPRIGHT", -8, -6)
-    editBtn:SetText("Edit Goal")
+    editBtn:SetText(GM.L["EDIT_GOAL"])
     editBtn:SetScript("OnClick", function()
         PlaySound(856)
         GM.GoalEditor:Open(goal,
@@ -573,8 +573,8 @@ function OfficerView:_RenderGoalCard(L, parent, goal, periodKey)
 
     deleteBtn:SetScript("OnEnter", function(btn)
         GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
-        GameTooltip:SetText("Delete Goal")
-        GameTooltip:AddLine("This will deactivate the current goal.", 1, 0.5, 0.5)
+        GameTooltip:SetText(GM.L["DELETE_GOAL"])
+        GameTooltip:AddLine(GM.L["DELETE_GOAL_HINT"], 1, 0.5, 0.5)
         GameTooltip:Show()
     end)
     deleteBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -584,7 +584,7 @@ function OfficerView:_RenderGoalCard(L, parent, goal, periodKey)
         if not deleteBtn._confirmPending then
             deleteBtn._confirmPending = true
             delIcon:SetVertexColor(1, 0.3, 0.3)
-            GM:Print("|cffd9a400GuildMate:|r Click the X again within 3 seconds to confirm deletion.")
+            GM:Print(GM.L["DELETE_CONFIRM"])
             C_Timer.After(3, function()
                 deleteBtn._confirmPending = false
                 if delIcon then delIcon:SetVertexColor(1, 1, 1) end
@@ -592,7 +592,7 @@ function OfficerView:_RenderGoalCard(L, parent, goal, periodKey)
         else
             deleteBtn._confirmPending = false
             GM.DB:DeactivateAllGoals()
-            GM:Print("|cff4A90D9GuildMate:|r Goal deleted.")
+            GM:Print(GM.L["GOAL_DELETED"])
             OfficerView:Render()
         end
     end)
@@ -627,15 +627,15 @@ function OfficerView:_RenderActionBar(L, parent, goal)
         return btn
     end
 
-    ActionBtn(string.format("Remind Incomplete (%d)", incompleteCount), 200,
+    ActionBtn(string.format(GM.L["REMIND_INCOMPLETE"], incompleteCount), 200,
         function() GM.Donations:RemindIncomplete() end,
         not goal or incompleteCount == 0)
 
-    ActionBtn("Announce to Guild", 160,
+    ActionBtn(GM.L["ANNOUNCE_TO_GUILD"], 160,
         function() GM.Donations:AnnounceProgress() end,
         not goal)
 
-    ActionBtn("Export CSV", 110,
+    ActionBtn(GM.L["EXPORT_CSV"], 110,
         function() OfficerView:_ShowExportWindow(goal) end,
         false)
 end
@@ -664,12 +664,12 @@ function OfficerView:_RenderMemberRow(L, parent, row)
         GameTooltip:ClearLines()
         GameTooltip:AddLine(row.name, 1, 1, 1)
         if row.goalAmount > 0 then
-            GameTooltip:AddLine(string.format("Donated: %s / %s  (%d%%)",
+            GameTooltip:AddLine(string.format(GM.L["DONATED_TOOLTIP"],
                 Utils.FormatMoneyShort(row.donated),
                 Utils.FormatMoneyShort(row.goalAmount), pct), 0.8, 0.8, 0.8)
             if periodsAhead > 0 then
-                local periodWord = (GM.DB:GetActiveGoal() and GM.DB:GetActiveGoal().period == "monthly") and "month" or "week"
-                GameTooltip:AddLine(string.format("+%d %s%s ahead", periodsAhead, periodWord, periodsAhead > 1 and "s" or ""), 0.4, 0.8, 0.4)
+                local pw = (GM.DB:GetActiveGoal() and GM.DB:GetActiveGoal().period == "monthly") and GM.L["MONTH_FULL"] or GM.L["WEEK_FULL"]
+                GameTooltip:AddLine(string.format(GM.L["AHEAD_TOOLTIP"], periodsAhead, pw, periodsAhead > 1 and "s" or ""), 0.4, 0.8, 0.4)
             end
         end
         GameTooltip:Show()
@@ -722,8 +722,8 @@ function OfficerView:_RenderMemberRow(L, parent, row)
             Utils.FormatMoneyShort(row.donated),
             Utils.FormatMoneyShort(row.goalAmount))
         if periodsAhead > 0 then
-            local periodWord = (GM.DB:GetActiveGoal() and GM.DB:GetActiveGoal().period == "monthly") and "mo" or "wk"
-            amtStr = amtStr .. "  |cff5fba47+" .. periodsAhead .. periodWord .. "|r"
+            local pw = (GM.DB:GetActiveGoal() and GM.DB:GetActiveGoal().period == "monthly") and GM.L["MONTH_SHORT"] or GM.L["WEEK_SHORT"]
+            amtStr = amtStr .. "  |cff5fba47" .. string.format(GM.L["AHEAD_SHORT"], periodsAhead, pw) .. "|r"
         end
     else
         amtStr = Utils.FormatMoneyShort(row.donated)
@@ -775,20 +775,19 @@ function OfficerView:_RenderMemberRow(L, parent, row)
             local goal = GM.DB:GetActiveGoal()
             if not goal then return end
             local remaining = goal.goldAmount - row.donated
-            SendChatMessage(string.format(
-                "[GuildMate] Hi %s! Don't forget the %s guild donation goal of %s. You've donated %s so far (%s remaining).",
+            SendChatMessage(string.format(GM.L["WHISPER_TEMPLATE"],
                 row.name, goal.period,
                 Utils.FormatMoneyShort(goal.goldAmount),
                 Utils.FormatMoneyShort(row.donated),
                 Utils.FormatMoneyShort(remaining)),
                 "WHISPER", nil, row.name)
-            GM:Print(string.format("|cff4A90D9GuildMate:|r Reminder sent to %s.", row.name))
+            GM:Print(string.format(GM.L["REMINDER_SENT"], row.name))
         end)
 
         whisperBtn:SetScript("OnEnter", function(btn)
             GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
             GameTooltip:ClearLines()
-            GameTooltip:AddLine("Whisper reminder to " .. row.name, 1, 1, 1)
+            GameTooltip:AddLine(string.format(GM.L["WHISPER_REMINDER_TIP"], row.name), 1, 1, 1)
             GameTooltip:Show()
         end)
         whisperBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -856,7 +855,7 @@ function OfficerView:_ShowExportWindow(goal)
 
     local efTitle = ef:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     efTitle:SetPoint("TOP", ef, "TOP", 0, -8)
-    efTitle:SetText("|cff4A90D9GuildMate|r — Export CSV")
+    efTitle:SetText(GM.L["EXPORT_TITLE"])
 
     local efClose = CreateFrame("Button", nil, ef, "UIPanelCloseButton")
     efClose:SetPoint("TOPRIGHT", ef, "TOPRIGHT", 4, 4)

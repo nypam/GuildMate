@@ -32,7 +32,7 @@ function MemberView:Render()
     local titleFs = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     titleFs:SetFont(Utils.Font(GameFontHighlight, 16))
     titleFs:SetPoint("LEFT", headerRow, "LEFT", 0, 0)
-    titleFs:SetText("|cffffffffYOUR DONATION STATUS|r")
+    titleFs:SetText("|cffffffff" .. GM.L["YOUR_DONATION_STATUS"] .. "|r")
 
     local settingsBtn = CreateFrame("Button", nil, headerRow, "UIPanelButtonTemplate")
     settingsBtn:SetSize(30, 24)
@@ -48,7 +48,7 @@ function MemberView:Render()
     end)
     settingsBtn:SetScript("OnEnter", function(btn)
         GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
-        GameTooltip:SetText("Settings")
+        GameTooltip:SetText(GM.L["SETTINGS"])
         GameTooltip:Show()
     end)
     settingsBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -63,15 +63,15 @@ function MemberView:Render()
         L:AddSpacer(PAD)
 
         -- Goal headline
-        L:AddText(string.format("|cffd4af37%s goal:|r  %s per member",
-            goal.period:gsub("^%l", string.upper),
+        local periodWord = goal.period == "monthly" and GM.L["MONTHLY"] or GM.L["WEEKLY"]
+        L:AddText(string.format(GM.L["GOAL_HEADLINE"], periodWord,
             Utils.FormatMoneyShort(goal.goldAmount)), 14)
 
         -- Period + time remaining
         local secsLeft = Utils.SecondsRemainingInPeriod(goal.period)
         local daysLeft = math.floor(secsLeft / 86400)
-        L:AddText(string.format("|cffaaaaaa%s  ·  %d day%s remaining|r",
-            Utils.PeriodLabel(periodKey), daysLeft, daysLeft == 1 and "" or "s"), 11)
+        L:AddText("|cffaaaaaa" .. string.format(GM.L["PERIOD_REMAINING"],
+            Utils.PeriodLabel(periodKey), daysLeft, daysLeft == 1 and "" or "s", "") .. "|r", 11)
 
         L:AddSpacer(8)
 
@@ -107,14 +107,15 @@ function MemberView:Render()
         -- Summary
         local remaining = math.max(0, goal.goldAmount - donated)
         if frac >= 1.0 then
-            local periodWord = goal.period == "monthly" and "month" or "week"
-            local aheadStr = ""
+            local pw = goal.period == "monthly" and GM.L["MONTH_FULL"] or GM.L["WEEK_FULL"]
             if periodsAhead > 0 then
-                aheadStr = string.format("  |cff5fba47+%d %s%s ahead|r", periodsAhead, periodWord, periodsAhead > 1 and "s" or "")
+                L:AddText(string.format(GM.L["GOAL_MET_AHEAD"],
+                    Utils.FormatMoneyShort(donated), periodsAhead, pw, periodsAhead > 1 and "s" or ""), 12)
+            else
+                L:AddText(string.format(GM.L["GOAL_MET"], Utils.FormatMoneyShort(donated)), 12)
             end
-            L:AddText("|cff5fba47Goal met!|r  You donated " .. Utils.FormatMoneyShort(donated) .. aheadStr, 12)
         else
-            L:AddText(string.format("%s donated  ·  |cffd9a400%s remaining|r  (%d%%)",
+            L:AddText(string.format(GM.L["DONATED_REMAINING"],
                 Utils.FormatMoneyShort(donated),
                 Utils.FormatMoneyShort(remaining), pct), 12)
         end
@@ -122,11 +123,11 @@ function MemberView:Render()
         -- Last deposit
         local rec = GM.DB.sv.donations[memberKey]
         if rec and rec.lastDeposit and rec.lastDeposit > 0 then
-            L:AddText("|cffaaaaaaLast deposit:  " .. date("%b %d at %H:%M", rec.lastDeposit) .. "|r", 11)
+            L:AddText("|cffaaaaaa" .. string.format(GM.L["LAST_DEPOSIT"], date("%b %d at %H:%M", rec.lastDeposit)) .. "|r", 11)
         end
 
         -- Hint
-        L:AddText("|cffaaaaaaDeposits you make to the guild bank are tracked automatically.|r", 11)
+        L:AddText("|cffaaaaaa" .. GM.L["AUTO_TRACK_HINT"] .. "|r", 11)
 
         L:AddSpacer(PAD)
         L:SetMargins(0, 0)
@@ -159,12 +160,12 @@ function MemberView:Render()
         Utils.SetFrameColor(noGoalRow, 0.15, 0.15, 0.15, 0.3)
         local fs = noGoalRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         fs:SetPoint("LEFT", noGoalRow, "LEFT", 10, 0)
-        fs:SetText("|cffaaaaaaNo donation goal has been set by an officer yet.|r")
+        fs:SetText("|cffaaaaaa" .. GM.L["NO_GOAL_SET"] .. "|r")
     end
 
     -- ── History ──────────────────────────────────────────────────────────────
     L:AddSpacer(14)
-    L:AddText("|cffccccccHISTORY|r", 12, GameFontHighlight)
+    L:AddText("|cffcccccc" .. GM.L["HISTORY"] .. "|r", 12, GameFontHighlight)
     L:AddSpacer(4)
 
     local rec = GM.DB.sv.donations[memberKey]
@@ -201,15 +202,15 @@ function MemberView:Render()
         end
 
         if #periods == 0 then
-            L:AddText("|cffaaaaaaNo donation history yet.|r", 12)
+            L:AddText("|cffaaaaaa" .. GM.L["NO_HISTORY"] .. "|r", 12)
         end
     else
-        L:AddText("|cffaaaaaaNo donation history yet.|r", 12)
+        L:AddText("|cffaaaaaa" .. GM.L["NO_HISTORY"] .. "|r", 12)
     end
 
     -- ── Guild Donation Logs ──────────────────────────────────────────────────
     L:AddSpacer(14)
-    L:AddText("|cffccccccGUILD DONATION LOGS|r", 12, GameFontHighlight)
+    L:AddText("|cffcccccc" .. GM.L["GUILD_DONATION_LOGS"] .. "|r", 12, GameFontHighlight)
     L:AddSpacer(4)
 
     -- Collect all donations across all members and periods
@@ -248,7 +249,7 @@ function MemberView:Render()
     end)
 
     if #allEntries == 0 then
-        L:AddText("|cffaaaaaaNo guild donation records found.|r", 12)
+        L:AddText("|cffaaaaaa" .. GM.L["NO_GUILD_RECORDS"] .. "|r", 12)
     else
         local lastPeriod = nil
         for _, entry in ipairs(allEntries) do

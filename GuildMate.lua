@@ -145,7 +145,7 @@ function GM:_CreateOptionsPanel()
         -- ── About section ────────────────────────────────────────────────────
         local title = self:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
         title:SetPoint("TOPLEFT", LEFT, y)
-        title:SetText("|cff4A90D9Guild|rMate")
+        title:SetText(GM.L["ADDON_TITLE"])
 
         local ver = self:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         ver:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -2)
@@ -156,22 +156,13 @@ function GM:_CreateOptionsPanel()
         desc:SetPoint("TOPLEFT", LEFT, y)
         desc:SetPoint("RIGHT", self, "RIGHT", RIGHT_MARGIN, 0)
         desc:SetJustifyH("LEFT")
-        desc:SetText(
-            "|cff4A90D9GuildMate|r helps guild leaders and officers track member donations " ..
-            "to the guild bank.\n\n" ..
-            "|cffd4af37How it works:|r Officers set a gold donation goal (weekly or monthly) " ..
-            "for selected ranks. When any guild member opens the guild bank, the addon reads " ..
-            "the last 25 money transactions and records deposits automatically. Totals sync " ..
-            "across all guild members who have the addon installed.\n\n" ..
-            "Officers see the full roster with colour-coded donation status, and can send " ..
-            "reminders or announcements. Members see their own progress and history.\n\n" ..
-            "Use |cffffd700/gm|r to open the main window, or click the minimap button.")
+        desc:SetText(GM.L["OPTIONS_DESC"])
 
         -- Open GuildMate button — anchored below the description with spacing
         local openBtn = CreateFrame("Button", nil, self, "UIPanelButtonTemplate")
         openBtn:SetSize(160, 24)
         openBtn:SetPoint("TOPLEFT", desc, "BOTTOMLEFT", 0, -12)
-        openBtn:SetText("Open GuildMate")
+        openBtn:SetText(GM.L["OPEN_GUILDMATE"])
         openBtn:SetScript("OnClick", function()
             PlaySound(856)
             GM.MainFrame:Show()
@@ -200,7 +191,7 @@ function GM:_CreateOptionsPanel()
         local remindCb = CreateFrame("CheckButton", nil, self, "InterfaceOptionsCheckButtonTemplate")
         remindCb:SetPoint(Below(8))
         remindCb:SetChecked(GM.DB:GetSetting("reminderEnabled"))
-        remindCb.Text:SetText("Show a reminder on login if I haven't met the donation goal")
+        remindCb.Text:SetText(GM.L["LOGIN_REMINDER_DESC"])
         remindCb:SetScript("OnClick", function(cb)
             GM.DB:SetSetting("reminderEnabled", cb:GetChecked())
             PlaySound(856)
@@ -211,7 +202,7 @@ function GM:_CreateOptionsPanel()
         local goalMetCb = CreateFrame("CheckButton", nil, self, "InterfaceOptionsCheckButtonTemplate")
         goalMetCb:SetPoint(Below(4))
         goalMetCb:SetChecked(GM.DB:GetSetting("goalMetAnnounce"))
-        goalMetCb.Text:SetText("Announce in guild chat when a member meets the donation goal")
+        goalMetCb.Text:SetText(GM.L["GOAL_MET_DESC"])
         goalMetCb:SetScript("OnClick", function(cb)
             GM.DB:SetSetting("goalMetAnnounce", cb:GetChecked())
             PlaySound(856)
@@ -225,13 +216,13 @@ function GM:_CreateOptionsPanel()
         if isOfficer then
             local officerTitle = self:CreateFontString(nil, "OVERLAY", "GameFontNormal")
             officerTitle:SetPoint(Below(12))
-            officerTitle:SetText("|cffd4af37Goal Management|r")
+            officerTitle:SetText("|cffd4af37" .. GM.L["GOAL_MANAGEMENT"] .. "|r")
             lastWidget = officerTitle
 
             -- Goal Management Ranks
             local rankDesc = self:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             rankDesc:SetPoint(Below(4))
-            rankDesc:SetText("|cffaaaaaaRanks that can create, edit and delete donation goals:|r")
+            rankDesc:SetText("|cffaaaaaa" .. GM.L["GOAL_MGMT_DESC"] .. "|r")
             lastWidget = rankDesc
 
             local numRanks = GuildControlGetNumRanks and GuildControlGetNumRanks() or 0
@@ -257,13 +248,13 @@ function GM:_CreateOptionsPanel()
             -- Announce Channel
             local chanLabel = self:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             chanLabel:SetPoint(Below(10))
-            chanLabel:SetText("|cffaaaaaaAnnounce progress to:|r")
+            chanLabel:SetText("|cffaaaaaa" .. GM.L["ANNOUNCE_CHANNEL_DESC"] .. "|r")
             lastWidget = chanLabel
 
             local channels = {
-                { value = "GUILD",   label = "Guild Chat"   },
-                { value = "OFFICER", label = "Officer Chat"  },
-                { value = "OFF",     label = "Off"           },
+                { value = "GUILD",   label = "GUILD_CHAT"   },
+                { value = "OFFICER", label = "OFFICER_CHAT"  },
+                { value = "OFF",     label = "OFF"           },
             }
             local currentChan = GM.DB:GetSetting("announceChannel") or "GUILD"
             local chanBtns = {}
@@ -272,7 +263,7 @@ function GM:_CreateOptionsPanel()
                 local cb = CreateFrame("CheckButton", nil, self, "InterfaceOptionsCheckButtonTemplate")
                 cb:SetPoint(Below(0))
                 cb:SetChecked(currentChan == ch.value)
-                cb.Text:SetText(ch.label)
+                cb.Text:SetText(GM.L[ch.label])
                 local chValue = ch.value
                 cb:SetScript("OnClick", function()
                     GM.DB:SetSetting("announceChannel", chValue)
@@ -289,7 +280,7 @@ function GM:_CreateOptionsPanel()
         -- ── Footer note ──────────────────────────────────────────────────────
         local note = self:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         note:SetPoint(Below(12))
-        note:SetText("|cffaaaaaa Settings are saved automatically.|r")
+        note:SetText("|cffaaaaaa" .. GM.L["SETTINGS_AUTO_SAVE"] .. "|r")
     end)
 
     -- Register with the Interface Options system

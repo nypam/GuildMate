@@ -155,7 +155,7 @@ function Donations:ProcessTransactionLog()
                         _announcedMilestones[milestoneKey] = true
                         local name = rosterInfo.name or memberKey:match("^(.+)-[^-]+$") or memberKey
                         SendChatMessage(
-                            string.format("[GuildMate] %s has met the %s donation goal of %s!",
+                            string.format(GM.L["GOAL_MET_ANNOUNCE"],
                                 name, goal.period, Utils.FormatMoneyShort(goal.goldAmount)),
                             "GUILD")
                     end
@@ -279,7 +279,7 @@ end
 function Donations:RemindIncomplete()
     local goal = GM.DB:GetActiveGoal()
     if not goal then
-        GM:Print("No active donation goal set.")
+        GM:Print(GM.L["NO_ACTIVE_GOAL"])
         return
     end
 
@@ -293,8 +293,7 @@ function Donations:RemindIncomplete()
             local donated = GM.DB:GetDonated(key, periodKey)
             if donated < goal.goldAmount then
                 local remaining = goal.goldAmount - donated
-                local whisper = string.format(
-                    "[GuildMate] Hi %s! Don't forget the %s guild donation goal of %s. You've donated %s so far (%s remaining).",
+                local whisper = string.format(GM.L["WHISPER_TEMPLATE"],
                     info.name, goal.period,
                     Utils.FormatMoneyShort(goal.goldAmount),
                     Utils.FormatMoneyShort(donated),
@@ -305,7 +304,7 @@ function Donations:RemindIncomplete()
         end
     end
 
-    GM:Print(string.format("|cff4A90D9GuildMate:|r Sent reminders to %d online member(s).", count))
+    GM:Print(string.format(GM.L["SENT_REMINDERS"], count))
 end
 
 -- Post a progress summary to the configured channel
@@ -327,8 +326,7 @@ function Donations:AnnounceProgress()
     local channel = GM.DB:GetSetting("announceChannel")
     if channel == "OFF" then return end
 
-    local text = string.format(
-        "[GuildMate] Donation progress (%s): %d / %d members have met the %s goal.",
+    local text = string.format(GM.L["ANNOUNCE_FORMAT"],
         Utils.PeriodLabel(periodKey), met, total, Utils.FormatMoneyShort(goal.goldAmount))
 
     SendChatMessage(text, channel)

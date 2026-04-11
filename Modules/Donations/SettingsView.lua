@@ -20,7 +20,7 @@ function SettingsView:Render(onBack)
     local backBtn = CreateFrame("Button", nil, headerRow, "UIPanelButtonTemplate")
     backBtn:SetSize(80, 24)
     backBtn:SetPoint("LEFT", headerRow, "LEFT", 0, 0)
-    backBtn:SetText("Back")
+    backBtn:SetText(GM.L["BACK"])
     backBtn:SetScript("OnClick", function()
         PlaySound(856)
         if onBack then onBack() end
@@ -29,7 +29,7 @@ function SettingsView:Render(onBack)
     local titleFs = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     titleFs:SetFont(Utils.Font(GameFontHighlight, 16))
     titleFs:SetPoint("LEFT", backBtn, "RIGHT", 10, 0)
-    titleFs:SetText("|cff4A90D9SETTINGS|r")
+    titleFs:SetText("|cff4A90D9" .. GM.L["SETTINGS"] .. "|r")
 
     L:AddSpacer(8)
 
@@ -40,9 +40,9 @@ function SettingsView:Render(onBack)
     -- ── Officer-only settings ────────────────────────────────────────────────
     if isOfficer then
         -- Goal Management
-        L:AddHeader("Goal Management")
+        L:AddHeader(GM.L["GOAL_MANAGEMENT"])
         L:AddSpacer(2)
-        L:AddText("|cffaaaaaaRanks that can create, edit and delete donation goals.|r", 11)
+        L:AddText("|cffaaaaaa" .. GM.L["GOAL_MGMT_DESC"] .. "|r", 11)
         L:AddSpacer(6)
 
         local numRanks = GuildControlGetNumRanks and GuildControlGetNumRanks() or 0
@@ -64,15 +64,15 @@ function SettingsView:Render(onBack)
         L:AddSpacer(14)
 
         -- Announce Channel
-        L:AddHeader("Announce Channel")
+        L:AddHeader(GM.L["ANNOUNCE_CHANNEL"])
         L:AddSpacer(2)
-        L:AddText("|cffaaaaaaWhere to post progress summaries when you click \"Announce to Guild\".|r", 11)
+        L:AddText("|cffaaaaaa" .. GM.L["ANNOUNCE_CHANNEL_DESC"] .. "|r", 11)
         L:AddSpacer(6)
 
         local channels = {
-            { value = "GUILD",   label = "Guild Chat"   },
-            { value = "OFFICER", label = "Officer Chat"  },
-            { value = "OFF",     label = "Off"           },
+            { value = "GUILD",   label = "GUILD_CHAT"   },
+            { value = "OFFICER", label = "OFFICER_CHAT"  },
+            { value = "OFF",     label = "OFF"           },
         }
         local currentChan = GM.DB:GetSetting("announceChannel") or "GUILD"
         local chanBtns = {}
@@ -86,7 +86,7 @@ function SettingsView:Render(onBack)
             cb:SetChecked(currentChan == ch.value)
             local lbl = cb:CreateFontString(nil, "OVERLAY", "GameFontNormal")
             lbl:SetPoint("LEFT", cb, "RIGHT", 4, 0)
-            lbl:SetText(ch.label)
+            lbl:SetText(GM.L[ch.label])
             local chValue = ch.value
             cb:SetScript("OnClick", function()
                 GM.DB:SetSetting("announceChannel", chValue)
@@ -105,10 +105,10 @@ function SettingsView:Render(onBack)
     -- ── Settings visible to everyone ─────────────────────────────────────────
 
     -- Login Reminder
-    L:AddHeader("Login Reminder")
+    L:AddHeader(GM.L["LOGIN_REMINDER_HEADER"])
     L:AddSpacer(2)
     local remindCb = L:AddCheckbox(
-        "Show a reminder on login if I haven't met the donation goal",
+        GM.L["LOGIN_REMINDER_DESC"],
         GM.DB:GetSetting("reminderEnabled"))
     remindCb:SetScript("OnClick", function(self)
         GM.DB:SetSetting("reminderEnabled", self:GetChecked())
@@ -118,10 +118,10 @@ function SettingsView:Render(onBack)
     L:AddSpacer(14)
 
     -- Goal Met Announcement
-    L:AddHeader("Goal Met Announcement")
+    L:AddHeader(GM.L["GOAL_MET_HEADER"])
     L:AddSpacer(2)
     local goalMetCb = L:AddCheckbox(
-        "Announce in guild chat when a member meets the donation goal",
+        GM.L["GOAL_MET_DESC"],
         GM.DB:GetSetting("goalMetAnnounce"))
     goalMetCb:SetScript("OnClick", function(self)
         GM.DB:SetSetting("goalMetAnnounce", self:GetChecked())
@@ -131,7 +131,7 @@ function SettingsView:Render(onBack)
     L:AddSpacer(20)
 
     -- Save note
-    L:AddText("|cffaaaaaa Settings are saved automatically and persist across sessions.|r", 11)
+    L:AddText("|cffaaaaaa" .. GM.L["SETTINGS_AUTO_SAVE"] .. "|r", 11)
 
     L:Finish()
 end
