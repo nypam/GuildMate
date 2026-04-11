@@ -7,6 +7,8 @@ local Utils = GM.Utils
 local MemberView = {}
 GM.MemberView = MemberView
 
+local _showGuildLogs = false
+
 -- ── Render ───────────────────────────────────────────────────────────────────
 
 function MemberView:Render()
@@ -58,7 +60,25 @@ function MemberView:Render()
     -- ── Status card ──────────────────────────────────────────────────────────
     if goal then
         local PAD = 10
-        local cardStartY = L:GetY()
+        local bc = color
+
+        local function PaintBorder(bg)
+            local function Edge(p1, r1, p2, r2, w, h)
+                local t = bg:CreateTexture(nil, "BORDER")
+                t:SetPoint(p1, bg, r1)
+                t:SetPoint(p2, bg, r2)
+                if w then t:SetWidth(w) end
+                if h then t:SetHeight(h) end
+                t:SetColorTexture(bc[1], bc[2], bc[3], 0.6)
+            end
+            Edge("TOPLEFT", "TOPLEFT", "TOPRIGHT", "TOPRIGHT", nil, 1)
+            Edge("BOTTOMLEFT", "BOTTOMLEFT", "BOTTOMRIGHT", "BOTTOMRIGHT", nil, 1)
+            Edge("TOPLEFT", "TOPLEFT", "BOTTOMLEFT", "BOTTOMLEFT", 1, nil)
+            Edge("TOPRIGHT", "TOPRIGHT", "BOTTOMRIGHT", "BOTTOMRIGHT", 1, nil)
+        end
+
+        -- ── Container 1: Goal info + progress bar ────────────────────────────
+        local card1Start = L:GetY()
         L:SetMargins(PAD, PAD)
         L:AddSpacer(PAD)
 
@@ -102,59 +122,58 @@ function MemberView:Render()
             fill:SetWidth(math.max(1, w * frac))
         end)
 
-        L:AddSpacer(8)
+        L:AddSpacer(PAD)
+        L:SetMargins(0, 0)
 
-        -- Summary
+        -- Paint container 1 background (no border — border goes on parent)
+        local card1H = L:GetY() - card1Start
+        local card1Bg = CreateFrame("Frame", nil, parent)
+        card1Bg:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -card1Start)
+        card1Bg:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
+        card1Bg:SetHeight(card1H)
+        card1Bg:SetFrameLevel(parent:GetFrameLevel())
+        Utils.SetFrameColor(card1Bg, color[1], color[2], color[3], 0.08)
+
+        -- ── Container 2: Goal status (edge-to-edge, stronger tint) ──────────
+        local summaryRow = L:AddFrame(28)
+        Utils.SetFrameColor(summaryRow, color[1], color[2], color[3], 0.18)
+
+        -- Left: summary text
+        local summaryFs = summaryRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        summaryFs:SetPoint("LEFT", summaryRow, "LEFT", 10, 0)
+        summaryFs:SetJustifyH("LEFT")
+
         local remaining = math.max(0, goal.goldAmount - donated)
         if frac >= 1.0 then
             local pw = goal.period == "monthly" and GM.L["MONTH_FULL"] or GM.L["WEEK_FULL"]
             if periodsAhead > 0 then
-                L:AddText(string.format(GM.L["GOAL_MET_AHEAD"],
-                    Utils.FormatMoneyShort(donated), periodsAhead, pw, periodsAhead > 1 and "s" or ""), 12)
+                summaryFs:SetText(string.format(GM.L["GOAL_MET_AHEAD"],
+                    Utils.FormatMoneyShort(donated), periodsAhead, pw, periodsAhead > 1 and "s" or ""))
             else
-                L:AddText(string.format(GM.L["GOAL_MET"], Utils.FormatMoneyShort(donated)), 12)
+                summaryFs:SetText(string.format(GM.L["GOAL_MET"], Utils.FormatMoneyShort(donated)))
             end
         else
-            L:AddText(string.format(GM.L["DONATED_REMAINING"],
+            summaryFs:SetText(string.format(GM.L["DONATED_REMAINING"],
                 Utils.FormatMoneyShort(donated),
-                Utils.FormatMoneyShort(remaining), pct), 12)
+                Utils.FormatMoneyShort(remaining), pct))
         end
 
-        -- Last deposit
+        -- Right: last deposit
         local rec = GM.DB.sv.donations[memberKey]
         if rec and rec.lastDeposit and rec.lastDeposit > 0 then
-            L:AddText("|cffaaaaaa" .. string.format(GM.L["LAST_DEPOSIT"], date("%b %d at %H:%M", rec.lastDeposit)) .. "|r", 11)
+            local lastFs = summaryRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            lastFs:SetPoint("RIGHT", summaryRow, "RIGHT", -10, 0)
+            lastFs:SetJustifyH("RIGHT")
+            lastFs:SetText("|cffaaaaaa" .. string.format(GM.L["LAST_DEPOSIT"], date("%b %d at %H:%M", rec.lastDeposit)) .. "|r")
         end
 
-        -- Hint
-        L:AddText("|cffaaaaaa" .. GM.L["AUTO_TRACK_HINT"] .. "|r", 11)
-
-        L:AddSpacer(PAD)
-        L:SetMargins(0, 0)
-
-        -- Paint card background + border with status colour
-        local cardH = L:GetY() - cardStartY
-        local cardBg = CreateFrame("Frame", nil, parent)
-        cardBg:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -cardStartY)
-        cardBg:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
-        cardBg:SetHeight(cardH)
-        cardBg:SetFrameLevel(parent:GetFrameLevel())
-        Utils.SetFrameColor(cardBg, color[1], color[2], color[3], 0.10)
-
-        -- Border in status colour
-        local bc = color
-        local function Edge(p1, r1, p2, r2, w, h)
-            local t = cardBg:CreateTexture(nil, "BORDER")
-            t:SetPoint(p1, cardBg, r1)
-            t:SetPoint(p2, cardBg, r2)
-            if w then t:SetWidth(w) end
-            if h then t:SetHeight(h) end
-            t:SetColorTexture(bc[1], bc[2], bc[3], 0.6)
-        end
-        Edge("TOPLEFT", "TOPLEFT", "TOPRIGHT", "TOPRIGHT", nil, 1)
-        Edge("BOTTOMLEFT", "BOTTOMLEFT", "BOTTOMRIGHT", "BOTTOMRIGHT", nil, 1)
-        Edge("TOPLEFT", "TOPLEFT", "BOTTOMLEFT", "BOTTOMLEFT", 1, nil)
-        Edge("TOPRIGHT", "TOPRIGHT", "BOTTOMRIGHT", "BOTTOMRIGHT", 1, nil)
+        -- Parent border wrapping both containers
+        local outerBg = CreateFrame("Frame", nil, parent)
+        outerBg:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -card1Start)
+        outerBg:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
+        outerBg:SetHeight(L:GetY() - card1Start)
+        outerBg:SetFrameLevel(parent:GetFrameLevel())
+        PaintBorder(outerBg)
     else
         local noGoalRow = L:AddFrame(40)
         Utils.SetFrameColor(noGoalRow, 0.15, 0.15, 0.15, 0.3)
@@ -168,49 +187,180 @@ function MemberView:Render()
     L:AddText("|cffcccccc" .. GM.L["HISTORY"] .. "|r", 12, GameFontHighlight)
     L:AddSpacer(4)
 
+    -- Build a combined timeline: real past periods + previous empty + future covered
+    local historyRows = {}  -- { periodKey, amount, covered }
+    local goalAmt = goal and goal.goldAmount or 0
+    local periodType = goal and goal.period or "weekly"
+    local periodOffset = (periodType == "weekly") and (7 * 86400) or (30 * 86400)
+
+    -- Collect real donation periods
     local rec = GM.DB.sv.donations[memberKey]
+    local knownPeriods = {}
     if rec and rec.records then
-        local periods = {}
-        for k in pairs(rec.records) do periods[#periods + 1] = k end
-        table.sort(periods, function(a, b) return a > b end)
-
-        local shown = 0
-        for _, pk in ipairs(periods) do
-            if shown >= 6 then break end
-            shown = shown + 1
-
-            local amt     = GM.DB:GetDonated(memberKey, pk)
-            local goalAmt = goal and goal.goldAmount or 0
-            local hfrac   = (goalAmt > 0) and math.min(1, amt / goalAmt) or 1
-            local hcolor  = Utils.StatusColor(hfrac)
-
-            local row = L:AddFrame(28)
-            Utils.SetFrameColor(row, hcolor[1], hcolor[2], hcolor[3], 0.20)
-
-            local colorHex = string.format("|cff%02x%02x%02x", hcolor[1]*255, hcolor[2]*255, hcolor[3]*255)
-            local dotFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-            dotFs:SetPoint("LEFT", row, "LEFT", 6, 0)
-            dotFs:SetText(colorHex .. "●|r")
-
-            local periodFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-            periodFs:SetPoint("LEFT", row, "LEFT", 26, 0)
-            periodFs:SetText(Utils.PeriodLabel(pk))
-
-            local amtFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-            amtFs:SetPoint("LEFT", row, "LEFT", 230, 0)
-            amtFs:SetText(Utils.FormatMoneyShort(amt))
+        for pk in pairs(rec.records) do
+            local amt = GM.DB:GetDonated(memberKey, pk)
+            if amt > 0 then
+                historyRows[#historyRows + 1] = { periodKey = pk, amount = amt, covered = false }
+                knownPeriods[pk] = true
+            end
         end
-
-        if #periods == 0 then
-            L:AddText("|cffaaaaaa" .. GM.L["NO_HISTORY"] .. "|r", 12)
-        end
-    else
-        L:AddText("|cffaaaaaa" .. GM.L["NO_HISTORY"] .. "|r", 12)
     end
 
-    -- ── Guild Donation Logs ──────────────────────────────────────────────────
+    -- Add previous periods (up to 4 back) even if empty — so you see the gap
+    if goal then
+        for i = 1, 4 do
+            local pastTs = time() - (i * periodOffset)
+            local pastPk = Utils.PeriodKey(pastTs, periodType)
+            if not knownPeriods[pastPk] then
+                historyRows[#historyRows + 1] = { periodKey = pastPk, amount = 0, covered = false }
+                knownPeriods[pastPk] = true
+            end
+        end
+    end
+
+    -- Add future "covered" periods if current period has overpayment
+    if goal and goalAmt > 0 and periodKey then
+        local currentDonated = GM.DB:GetDonated(memberKey, periodKey)
+        local ahead = math.floor(currentDonated / goalAmt) - 1
+        if ahead > 0 then
+            for i = 1, ahead do
+                local futureTs = time() + (i * periodOffset)
+                local futurePk = Utils.PeriodKey(futureTs, periodType)
+                if not knownPeriods[futurePk] then
+                    historyRows[#historyRows + 1] = { periodKey = futurePk, amount = 0, covered = true }
+                    knownPeriods[futurePk] = true
+                end
+            end
+        end
+    end
+
+    -- Sort: most recent / future first
+    table.sort(historyRows, function(a, b) return a.periodKey > b.periodKey end)
+
+    if #historyRows == 0 then
+        L:AddText("|cffaaaaaa" .. GM.L["NO_HISTORY"] .. "|r", 12)
+    else
+        local ROW_H = 28
+        local shown = 0
+        for _, hr in ipairs(historyRows) do
+            if shown >= 10 then break end
+            shown = shown + 1
+
+            local hfrac
+            if hr.covered then
+                hfrac = 1
+            else
+                hfrac = (goalAmt > 0) and math.min(1, hr.amount / goalAmt) or (hr.amount > 0 and 1 or 0)
+            end
+            local hcolor = Utils.StatusColor(hfrac)
+
+            local row = L:AddFrame(ROW_H)
+            row:EnableMouse(true)
+
+            -- Background
+            local bgTex = row:CreateTexture(nil, "BACKGROUND")
+            bgTex:SetAllPoints()
+            bgTex:SetTexture("Interface\\Buttons\\WHITE8X8")
+            bgTex:SetVertexColor(0.12, 0.12, 0.12, 0.3)
+
+            -- Hover
+            row:SetScript("OnEnter", function() bgTex:SetVertexColor(0.18, 0.18, 0.18, 0.5) end)
+            row:SetScript("OnLeave", function() bgTex:SetVertexColor(0.12, 0.12, 0.12, 0.3) end)
+
+            -- Colour square (like officer view)
+            local square = row:CreateTexture(nil, "OVERLAY")
+            square:SetSize(8, 8)
+            square:SetPoint("LEFT", row, "LEFT", 6, 0)
+            square:SetTexture("Interface\\Buttons\\WHITE8X8")
+            square:SetVertexColor(hcolor[1], hcolor[2], hcolor[3], 1)
+
+            -- Period label
+            local periodFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            periodFs:SetPoint("LEFT", row, "LEFT", 22, 0)
+            periodFs:SetWidth(150)
+            periodFs:SetJustifyH("LEFT")
+            if hr.covered then
+                periodFs:SetText("|cff5fba47" .. Utils.PeriodLabel(hr.periodKey) .. "|r")
+            else
+                periodFs:SetText(Utils.PeriodLabel(hr.periodKey))
+            end
+
+            -- Amount text
+            local amtFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            amtFs:SetPoint("LEFT", row, "LEFT", 176, 0)
+            amtFs:SetWidth(120)
+            amtFs:SetJustifyH("LEFT")
+            if hr.covered then
+                amtFs:SetText("|cff5fba47(covered)|r")
+            else
+                local aheadCount = (goalAmt > 0 and hr.amount >= goalAmt)
+                    and math.floor(hr.amount / goalAmt) - 1 or 0
+                local amtText = Utils.FormatMoneyShort(hr.amount)
+                if aheadCount > 0 then
+                    local pw = periodType == "monthly" and GM.L["MONTH_FULL"] or GM.L["WEEK_FULL"]
+                    amtText = amtText .. "  |cff5fba47+" .. aheadCount .. pw .. "|r"
+                end
+                amtFs:SetText(amtText)
+            end
+
+            -- Progress bar (right side)
+            if goalAmt > 0 then
+                local barFrame = CreateFrame("Frame", nil, row)
+                barFrame:SetHeight(10)
+                barFrame:SetPoint("LEFT", row, "LEFT", 300, 0)
+                barFrame:SetPoint("RIGHT", row, "RIGHT", -8, 0)
+
+                local track = barFrame:CreateTexture(nil, "BACKGROUND")
+                track:SetAllPoints()
+                track:SetTexture("Interface\\RAIDFRAME\\Raid-Bar-Hp-Fill")
+                track:SetVertexColor(0.1, 0.1, 0.1, 0.8)
+
+                local fill = barFrame:CreateTexture(nil, "BORDER")
+                fill:SetPoint("TOPLEFT")
+                fill:SetPoint("BOTTOMLEFT")
+                fill:SetTexture("Interface\\RAIDFRAME\\Raid-Bar-Hp-Fill")
+                fill:SetVertexColor(hcolor[1], hcolor[2], hcolor[3], 0.85)
+                fill:SetWidth(1)
+
+                local pct = math.floor(hfrac * 100)
+                local pctFs = barFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                pctFs:SetPoint("CENTER")
+                pctFs:SetText(pct .. "%")
+                pctFs:SetTextColor(1, 1, 1, 0.9)
+
+                barFrame:SetScript("OnSizeChanged", function(_, w)
+                    fill:SetWidth(math.max(1, w * hfrac))
+                end)
+            end
+        end
+    end
+
+    -- ── Guild Donation Logs (toggle) ────────────────────────────────────────
     L:AddSpacer(14)
-    L:AddText("|cffcccccc" .. GM.L["GUILD_DONATION_LOGS"] .. "|r", 12, GameFontHighlight)
+
+    local toggleRow = L:AddRow(22)
+
+    -- Title (left)
+    local toggleTitle = toggleRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    toggleTitle:SetPoint("LEFT", toggleRow, "LEFT", 0, 0)
+    toggleTitle:SetText("|cffcccccc" .. GM.L["GUILD_DONATION_LOGS"] .. "|r")
+
+    -- Show/Hide button (right)
+    local toggleBtn = CreateFrame("Button", nil, toggleRow, "UIPanelButtonTemplate")
+    toggleBtn:SetSize(60, 20)
+    toggleBtn:SetPoint("RIGHT", toggleRow, "RIGHT", 0, 0)
+    toggleBtn:SetText(_showGuildLogs and "Hide" or "Show")
+    toggleBtn:SetScript("OnClick", function()
+        PlaySound(856)
+        _showGuildLogs = not _showGuildLogs
+        MemberView:Render()
+    end)
+
+    if not _showGuildLogs then
+        L:Finish()
+        return
+    end
+
     L:AddSpacer(4)
 
     -- Collect all donations across all members and periods

@@ -21,8 +21,8 @@ local PADDING      = 8
 local _modules  = {}
 local _activeId = nil
 
-function MainFrame:RegisterModule(id, label, icon, module)
-    _modules[#_modules + 1] = { id = id, label = label, icon = icon, module = module }
+function MainFrame:RegisterModule(id, label, icon, module, children)
+    _modules[#_modules + 1] = { id = id, label = label, icon = icon, module = module, children = children }
 end
 
 -- ── Build ────────────────────────────────────────────────────────────────────
@@ -173,22 +173,32 @@ end
 
 -- ── Sidebar ──────────────────────────────────────────────────────────────────
 
+-- All sidebar buttons (cleared and rebuilt on every _BuildSidebar call)
+local _sidebarButtons = {}
+
 function MainFrame:_BuildSidebar()
+    -- Clear existing buttons
+    for _, btn in ipairs(_sidebarButtons) do
+        btn:Hide()
+        btn:SetParent(nil)
+    end
+    wipe(_sidebarButtons)
+
     local yOff = -8
-    for _, entry in ipairs(_modules) do
+
+    local function MakeBtn(entryId, entryLabel, entryIcon, height, indent)
         local btn = CreateFrame("Button", nil, self._sidebar)
-        btn:SetHeight(32)
-        btn:SetPoint("TOPLEFT", self._sidebar, "TOPLEFT", 4, yOff)
+        btn:SetHeight(height)
+        btn:SetPoint("TOPLEFT", self._sidebar, "TOPLEFT", 4 + indent, yOff)
         btn:SetPoint("RIGHT", self._sidebar, "RIGHT", -4, 0)
 
-        -- Active highlight background
         local activeBg = btn:CreateTexture(nil, "BACKGROUND")
         activeBg:SetAllPoints()
         activeBg:SetColorTexture(0.15, 0.28, 0.45, 0.6)
         activeBg:Hide()
         btn._activeBg = activeBg
+        btn._moduleId = entryId
 
-        -- Hover highlight
         local hoverBg = btn:CreateTexture(nil, "BACKGROUND")
         hoverBg:SetAllPoints()
         hoverBg:SetColorTexture(0.2, 0.2, 0.2, 0.4)
@@ -197,35 +207,58 @@ function MainFrame:_BuildSidebar()
         btn:SetScript("OnEnter", function() if not activeBg:IsShown() then hoverBg:Show() end end)
         btn:SetScript("OnLeave", function() hoverBg:Hide() end)
 
-        -- Icon
+        local iconSize = indent > 0 and 14 or 20
         local icon = btn:CreateTexture(nil, "ARTWORK")
-        icon:SetSize(20, 20)
+        icon:SetSize(iconSize, iconSize)
         icon:SetPoint("LEFT", btn, "LEFT", 6, 0)
-        icon:SetTexture(entry.icon)
+        icon:SetTexture(entryIcon)
 
-        -- Label
-        local label = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        label:SetPoint("LEFT", icon, "RIGHT", 6, 0)
-        label:SetText(entry.label)
+        local label = btn:CreateFontString(nil, "OVERLAY", indent > 0 and "GameFontNormalSmall" or "GameFontNormal")
+        label:SetPoint("LEFT", icon, "RIGHT", 4, 0)
+        label:SetText(entryLabel)
 
-        local moduleId = entry.id
         btn:SetScript("OnClick", function()
             PlaySound(856)
-            MainFrame:SelectModule(moduleId)
+            MainFrame:SelectModule(entryId)
         end)
 
-        entry._btn = btn
-        yOff = yOff - 34
+        _sidebarButtons[#_sidebarButtons + 1] = btn
+        return btn
     end
+
+    for _, entry in ipairs(_modules) do
+        entry._btn = MakeBtn(entry.id, entry.label, entry.icon, 32, 0)
+        yOff = yOff - 34
+
+        -- Show children only if this parent (or one of its children) is active
+        if entry.children then
+            local parentActive = (_activeId == entry.id)
+            if not parentActive then
+                for _, child in ipairs(entry.children) do
+                    if _activeId == child.id then parentActive = true; break end
+                end
+            end
+
+            if parentActive then
+                for _, child in ipairs(entry.children) do
+                    child._btn = MakeBtn(child.id, child.label, child.icon, 24, 14)
+                    yOff = yOff - 26
+                end
+            end
+        end
+    end
+
+    -- Update highlight
+    self:_UpdateSidebarHighlight()
 end
 
 function MainFrame:_UpdateSidebarHighlight()
-    for _, entry in ipairs(_modules) do
-        if entry._btn and entry._btn._activeBg then
-            if entry.id == _activeId then
-                entry._btn._activeBg:Show()
+    for _, btn in ipairs(_sidebarButtons) do
+        if btn._activeBg then
+            if btn._moduleId == _activeId then
+                btn._activeBg:Show()
             else
-                entry._btn._activeBg:Hide()
+                btn._activeBg:Hide()
             end
         end
     end
@@ -268,13 +301,36 @@ end
 
 function MainFrame:SelectModule(id)
     _activeId = id
-    self:_UpdateSidebarHighlight()
+    -- Rebuild sidebar to show/hide children based on active module
+    self:_BuildSidebar()
+    -- Find module in top-level or children
     for _, entry in ipairs(_modules) do
         if entry.id == id and entry.module and entry.module.Render then
             entry.module:Render()
-            break
+            return
+        end
+        if entry.children then
+            for _, child in ipairs(entry.children) do
+                if child.id == id and child.module and child.module.Render then
+                    child.module:Render()
+                    return
+                end
+            end
         end
     end
+end
+
+function MainFrame:_ShowComingSoon(moduleName)
+    local parent = self:ClearContent()
+    local L = Utils.LayoutBuilder(parent)
+
+    L:AddSpacer(40)
+    L:AddText("|cffffffff" .. moduleName .. "|r", 18, GameFontHighlight)
+    L:AddSpacer(12)
+    L:AddText("|cffaaaaaa" .. moduleName .. " is coming soon.|r", 12)
+    L:AddSpacer(8)
+    L:AddText("|cff888888Stay tuned for future updates!|r", 11)
+    L:Finish()
 end
 
 function MainFrame:Show()

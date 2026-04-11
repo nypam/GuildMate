@@ -27,6 +27,38 @@ function GM:OnInitialize()
         "Interface\\Icons\\INV_Misc_Coin_01",
         self.Donations)
 
+    local profComingSoon = function(name)
+        return { Render = function() GM.MainFrame:_ShowComingSoon(name) end }
+    end
+
+    self.MainFrame:RegisterModule(
+        "professions",
+        "Professions",
+        "Interface\\Icons\\Trade_Engineering",
+        { Render = function() GM.MainFrame:_ShowComingSoon("Professions") end },
+        {
+            { id = "prof_alchemy",       label = "Alchemy",        icon = "Interface\\Icons\\Trade_Alchemy",        module = profComingSoon("Alchemy") },
+            { id = "prof_blacksmithing", label = "Blacksmithing",  icon = "Interface\\Icons\\Trade_BlackSmithing",  module = profComingSoon("Blacksmithing") },
+            { id = "prof_enchanting",    label = "Enchanting",     icon = "Interface\\Icons\\Trade_Engraving",      module = profComingSoon("Enchanting") },
+            { id = "prof_engineering",    label = "Engineering",    icon = "Interface\\Icons\\Trade_Engineering",    module = profComingSoon("Engineering") },
+            { id = "prof_herbalism",      label = "Herbalism",      icon = "Interface\\Icons\\Trade_Herbalism",      module = profComingSoon("Herbalism") },
+            { id = "prof_jewelcrafting",  label = "Jewelcrafting",  icon = "Interface\\Icons\\INV_Misc_Gem_01",      module = profComingSoon("Jewelcrafting") },
+            { id = "prof_leatherworking", label = "Leatherworking", icon = "Interface\\Icons\\Trade_LeatherWorking", module = profComingSoon("Leatherworking") },
+            { id = "prof_mining",         label = "Mining",          icon = "Interface\\Icons\\Trade_Mining",          module = profComingSoon("Mining") },
+            { id = "prof_skinning",       label = "Skinning",        icon = "Interface\\Icons\\INV_Misc_Pelt_Wolf_01", module = profComingSoon("Skinning") },
+            { id = "prof_tailoring",      label = "Tailoring",       icon = "Interface\\Icons\\Trade_Tailoring",       module = profComingSoon("Tailoring") },
+        })
+
+    self.MainFrame:RegisterModule(
+        "requests",
+        "Requests",
+        "Interface\\Icons\\INV_Scroll_03",
+        { Render = function() GM.MainFrame:_ShowComingSoon("Requests") end },
+        {
+            { id = "req_gold",  label = "Gold",  icon = "Interface\\Icons\\INV_Misc_Coin_01", module = profComingSoon("Gold Requests") },
+            { id = "req_craft", label = "Craft", icon = "Interface\\Icons\\Trade_BlackSmithing", module = profComingSoon("Craft Requests") },
+        })
+
     -- Minimap button
     self:_CreateMinimapButton()
 
