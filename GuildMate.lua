@@ -449,12 +449,12 @@ function GM:OnCommReceived(prefix, message, channel, sender)
 
     -- Comm debug logging
     if self._commDebug then
-        local cmd = message and message:match("^(%w+)") or "?"
-        self:Print(string.format("|cff888888[comm in]|r %s from %s (%d bytes)", cmd, tostring(sender), #message))
+        local dbgCmd = message and message:match("^([%w_]+)") or "?"
+        self:Print(string.format("|cff888888[comm in]|r %s from %s (%d bytes)", dbgCmd, tostring(sender), #message))
     end
 
     -- PING/PONG for comm testing
-    local cmd = message and message:match("^(%w+)")
+    local cmd = message and message:match("^([%w_]+)")
     if cmd == "PING" then
         GM:SendCommMessage("GuildMate", "PONG|" .. (UnitName("player") or "?"), "GUILD")
         return

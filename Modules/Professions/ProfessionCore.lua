@@ -9,6 +9,40 @@ GM.Professions = Professions
 
 -- ── Known profession names (TBC) ─────────────────────────────────────────────
 
+-- Profession names mapped to a canonical English key.
+-- Supports English (enUS) and French (frFR) client locales.
+-- The canonical key is what gets stored in the DB and displayed.
+local PROF_CANONICAL = {
+    -- English
+    ["Alchemy"]         = "Alchemy",
+    ["Blacksmithing"]   = "Blacksmithing",
+    ["Enchanting"]      = "Enchanting",
+    ["Engineering"]     = "Engineering",
+    ["Herbalism"]       = "Herbalism",
+    ["Jewelcrafting"]   = "Jewelcrafting",
+    ["Leatherworking"]  = "Leatherworking",
+    ["Mining"]          = "Mining",
+    ["Skinning"]        = "Skinning",
+    ["Tailoring"]       = "Tailoring",
+    ["Cooking"]         = "Cooking",
+    ["First Aid"]       = "First Aid",
+    ["Fishing"]         = "Fishing",
+    -- French (frFR)
+    ["Alchimie"]              = "Alchemy",
+    ["Forge"]                 = "Blacksmithing",
+    ["Enchantement"]          = "Enchanting",
+    ["Ing\195\169nierie"]     = "Engineering",
+    ["Herboristerie"]         = "Herbalism",
+    ["Joaillerie"]            = "Jewelcrafting",
+    ["Travail du cuir"]       = "Leatherworking",
+    ["Minage"]                = "Mining",
+    ["D\195\169pe\195\167age"] = "Skinning",
+    ["Couture"]               = "Tailoring",
+    ["Cuisine"]               = "Cooking",
+    ["Secourisme"]            = "First Aid",
+    ["P\195\170che"]          = "Fishing",
+}
+
 local PRIMARY_PROFESSIONS = {
     ["Alchemy"] = true,
     ["Blacksmithing"] = true,
@@ -34,6 +68,13 @@ for k in pairs(SECONDARY_PROFESSIONS) do ALL_PROFESSIONS[k] = true end
 
 function Professions:IsPrimary(name)
     return PRIMARY_PROFESSIONS[name] or false
+end
+
+-- Resolve a localized profession name to its canonical English key.
+-- Returns nil if the name is not a known profession.
+function Professions:Canonicalize(name)
+    if ALL_PROFESSIONS[name] then return name end
+    return PROF_CANONICAL[name]
 end
 
 -- ── DB helpers ───────────────────────────────────────────────────────────────
@@ -178,18 +219,22 @@ function Professions:ScanRecipes()
     local numSkills = getNumTS()
     if not numSkills or numSkills == 0 then return end
 
-    -- Determine which profession is open by reading the first header or the tradeskill name
+    -- Determine which profession is open (may be localized)
     local profName = nil
     if _G["GetTradeSkillLine"] then
-        profName = GetTradeSkillLine()
+        local rawName = GetTradeSkillLine()
+        profName = Professions:Canonicalize(rawName)
     end
-    if not profName or not ALL_PROFESSIONS[profName] then
+    if not profName then
         -- Fallback: try reading first header
         for i = 1, numSkills do
             local name, skillType = getTSInfo(i)
-            if skillType == "header" and ALL_PROFESSIONS[name] then
-                profName = name
-                break
+            if skillType == "header" then
+                local canonical = Professions:Canonicalize(name)
+                if canonical then
+                    profName = canonical
+                    break
+                end
             end
         end
     end
@@ -330,8 +375,11 @@ function Professions:ScanSelf()
 
     for i = 1, numLines do
         local name, isHeader, _, rank, _, _, maxRank = GetSkillLineInfo(i)
-        if not isHeader and name and ALL_PROFESSIONS[name] and rank and rank > 0 then
-            skills[name] = { rank = rank, maxRank = maxRank or 375 }
+        if not isHeader and name and rank and rank > 0 then
+            local canonical = Professions:Canonicalize(name)
+            if canonical then
+                skills[canonical] = { rank = rank, maxRank = maxRank or 375 }
+            end
         end
     end
 
@@ -374,12 +422,11 @@ end
 -- ── Comm: receive ────────────────────────────────────────────────────────────
 
 function Professions:OnCommReceived(message, _channel, sender)
-    local cmd = message:match("^(%w+)")
+    local cmd = message:match("^([%w_]+)")
 
     if cmd == "RECIPE_UPDATE" then
         -- RECIPE_UPDATE|memberKey|profName|recipe1;recipe2;recipe3
-        -- Use non-greedy [^|]+ to avoid ambiguous matching across | separators
-        local _, memberKey, profName, recipeStr = message:match("^(%w+)|([^|]+)|([^|]+)|(.+)$")
+        local _, memberKey, profName, recipeStr = message:match("^([%w_]+)|([^|]+)|([^|]+)|(.+)$")
         if not memberKey or not profName or not recipeStr then return true end
 
         local db = _EnsureRecipeDB()
@@ -408,7 +455,7 @@ function Professions:OnCommReceived(message, _channel, sender)
     if cmd ~= "PROF_UPDATE" then return false end
 
     -- PROF_UPDATE|memberKey|timestamp|Alchemy:375:375,Mining:300:375
-    local _, memberKey, tsStr, profStr = message:match("^(%w+)|([^|]+)|(%d+)|(.+)$")
+    local _, memberKey, tsStr, profStr = message:match("^([%w_]+)|([^|]+)|(%d+)|(.+)$")
     local timestamp = tonumber(tsStr)
 
     if not memberKey or not timestamp or not profStr then return true end

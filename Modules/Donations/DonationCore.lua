@@ -213,11 +213,11 @@ end
 -- ── Comm handler ─────────────────────────────────────────────────────────────
 
 function Donations:OnCommReceived(message, _channel, sender)
-    local cmd = message:match("^(%w+)")
+    local cmd = message:match("^([%w_]+)")
 
     if cmd == "DONATION_TOTAL" then
         -- DONATION_TOTAL|memberKey|periodKey|total
-        local _, memberKey, periodKey, totalStr = message:match("^(%w+)|([^|]+)|([^|]+)|(%d+)$")
+        local _, memberKey, periodKey, totalStr = message:match("^([%w_]+)|([^|]+)|([^|]+)|(%d+)$")
         local total = tonumber(totalStr)
         if memberKey and periodKey and total then
             GM.DB:SetDonationTotal(memberKey, periodKey, total)
@@ -262,11 +262,11 @@ function Donations:OnCommReceived(message, _channel, sender)
 
         if cmd == "GOAL" then
             _, idStr, amountStr, period, ranksStr, epochStr =
-                message:match("^(%w+)|(%d+)|(%d+)|(%w+)|([^|]+)|(%d+)$")
+                message:match("^([%w_]+)|(%d+)|(%d+)|(%w+)|([^|]+)|(%d+)$")
         else
             -- Legacy: skip createdBy field
             local _, _id, _amt, _per, _cb, _rk, _ep =
-                message:match("^(%w+)|(%d+)|(%d+)|([^|]+)|([^|]+)|([^|]+)|(%d+)$")
+                message:match("^([%w_]+)|(%d+)|(%d+)|([^|]+)|([^|]+)|([^|]+)|(%d+)$")
             idStr, amountStr, period, ranksStr, epochStr = _id, _amt, _per, _rk, _ep
         end
 
