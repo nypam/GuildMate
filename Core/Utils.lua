@@ -174,8 +174,7 @@ end
 
 -- Set a solid-colour background on any WoW frame.
 -- Stores the texture in frame._gmBg so repeated calls just update the colour.
--- If `aceWidget` is provided, hooks OnRelease to hide the texture when recycled.
-function Utils.SetFrameColor(frame, r, g, b, a, aceWidget)
+function Utils.SetFrameColor(frame, r, g, b, a)
     if not frame then return end
     if not frame._gmBg then
         local tex = frame:CreateTexture(nil, "BACKGROUND")
@@ -188,23 +187,12 @@ function Utils.SetFrameColor(frame, r, g, b, a, aceWidget)
         frame._gmBg:SetTexture(r, g, b, a or 1)
     end
     frame._gmBg:Show()
-
-    -- Register cleanup so recycled AceGUI widgets don't leak textures
-    if aceWidget and not aceWidget._gmBgHooked then
-        aceWidget._gmBgHooked = true
-        local origOnRelease = aceWidget.OnRelease
-        aceWidget.OnRelease = function(self)
-            if self.frame._gmBg then self.frame._gmBg:Hide() end
-            if origOnRelease then origOnRelease(self) end
-        end
-    end
 end
 
 -- ── Font helpers ─────────────────────────────────────────────────────────────
 
--- Returns the correct three args for AceGUI Label:SetFont(fontFile, height, flags).
--- Usage: label:SetFont(Utils.Font(GameFontHighlight, 16))
--- When Utils.Font() is the sole/last call expression, all three values are forwarded.
+-- Returns font path, size, flags for a given font object + custom size.
+-- Usage: fs:SetFont(Utils.Font(GameFontHighlight, 16))
 function Utils.Font(fontObject, size)
     local path, _, flags = fontObject:GetFont()
     return path, size, (flags or "")
@@ -218,65 +206,148 @@ function Utils.Truncate(str, maxLen)
     return str:sub(1, maxLen - 1) .. "…"
 end
 
--- ── Progress bar helpers ──────────────────────────────────────────────────────
+-- (AceGUI progress bar helper removed — views now use raw frames directly)
 
--- Large progress bar built entirely from AceGUI widgets — no native frames.
--- Uses a Label with background textures painted on its frame.
--- Returns the AceGUI Label widget. Callers just AddChild it.
---   text     = text shown centered on the bar (e.g. "3g / 5g  (60%)")
---   frac     = fill fraction 0-1
---   r, g, b  = fill colour
-function Utils.CreateProgressBar(text, frac, r, g, b)
-    local AceGUI = LibStub("AceGUI-3.0")
-    frac = math.max(0, math.min(1, frac or 0))
+-- ── Vertical layout builder ──────────────────────────────────────────────────
+-- Lightweight replacement for AceGUI layout: stacks elements top-to-bottom
+-- inside a parent frame, tracking the Y offset automatically.
+--
+-- Usage:
+--   local L = Utils.LayoutBuilder(scrollChild)
+--   L:AddText("Hello", 14)
+--   L:AddSpacer(8)
+--   local btn = L:AddButton("Click me", 120, 26)
+--   L:Finish()  -- sizes the parent to total height (for scroll child)
 
-    -- Use a dedicated child frame so textures don't pollute the recycled Label
-    local lbl = AceGUI:Create("Label")
-    lbl:SetText(" ")
-    lbl:SetFullWidth(true)
-    lbl:SetHeight(22)
+function Utils.LayoutBuilder(parent)
+    local lb = { parent = parent, y = 0, items = {}, marginL = 0, marginR = 0 }
 
-    local f = lbl.frame
-
-    -- Container frame owned by us — destroyed on release, never recycled
-    local bar = CreateFrame("Frame", nil, f)
-    bar:SetPoint("TOPLEFT", f, "TOPLEFT", 2, -1)
-    bar:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -2, 1)
-
-    -- Dark track background
-    local track = bar:CreateTexture(nil, "BACKGROUND")
-    track:SetAllPoints()
-    track:SetTexture("Interface\\RAIDFRAME\\Raid-Bar-Hp-Fill")
-    track:SetVertexColor(0.12, 0.12, 0.12, 0.9)
-
-    -- Coloured fill
-    local fill = bar:CreateTexture(nil, "BORDER")
-    fill:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, 0)
-    fill:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", 0, 0)
-    fill:SetTexture("Interface\\RAIDFRAME\\Raid-Bar-Hp-Fill")
-    fill:SetVertexColor(r or 0.2, g or 0.8, b or 0.2, 0.85)
-    fill:SetWidth(1)
-
-    -- Text overlay
-    local barText = bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    barText:SetPoint("LEFT", bar, "LEFT", 6, 0)
-    barText:SetText(text or "")
-    barText:SetTextColor(1, 1, 1, 1)
-
-    -- Update fill width when sized by AceGUI layout
-    bar:SetScript("OnSizeChanged", function(self, width)
-        fill:SetWidth(math.max(1, width * frac))
-    end)
-
-    -- Clean up the child frame when AceGUI recycles the Label
-    local origOnRelease = lbl.OnRelease
-    lbl.OnRelease = function(self)
-        bar:Hide()
-        bar:SetParent(nil)
-        if origOnRelease then origOnRelease(self) end
+    -- Add a FontString label, full width. Returns the FontString.
+    -- fontObj can be a FontObject (GameFontHighlight) or nil. Always use string
+    -- template for CreateFontString (TBC requires a string, not an object).
+    -- Set left/right margins for all subsequent elements
+    function lb:SetMargins(left, right)
+        self.marginL = left or 0
+        self.marginR = right or 0
     end
 
-    return lbl
+    function lb:AddText(text, fontSize, fontObj, r, g, b)
+        local fs = self.parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        fs:SetFont(Utils.Font(fontObj or GameFontNormal, fontSize or 12))
+        fs:SetPoint("TOPLEFT", self.parent, "TOPLEFT", self.marginL, -self.y)
+        fs:SetPoint("RIGHT", self.parent, "RIGHT", -self.marginR, 0)
+        fs:SetJustifyH("LEFT")
+        fs:SetJustifyV("TOP")
+        fs:SetText(text or "")
+        if r then fs:SetTextColor(r, g, b) end
+        local h = math.max(fontSize or 14, 16)
+        self.y = self.y + h + 2
+        return fs
+    end
+
+    -- Add a raw Frame with given height, full width (respects margins). Returns the frame.
+    function lb:AddFrame(height)
+        local f = CreateFrame("Frame", nil, self.parent)
+        f:SetHeight(height)
+        f:SetPoint("TOPLEFT", self.parent, "TOPLEFT", self.marginL, -self.y)
+        f:SetPoint("RIGHT", self.parent, "RIGHT", -self.marginR, 0)
+        self.y = self.y + height
+        return f
+    end
+
+    -- Add vertical spacing
+    function lb:AddSpacer(height)
+        self.y = self.y + (height or 8)
+    end
+
+    -- Add a standard UIPanelButton. Returns the button.
+    function lb:AddButton(text, width, height, xOffset)
+        height = height or 24
+        local btn = CreateFrame("Button", nil, self.parent, "UIPanelButtonTemplate")
+        btn:SetSize(width or 120, height)
+        btn:SetPoint("TOPLEFT", self.parent, "TOPLEFT", xOffset or 0, -self.y)
+        btn:SetText(text)
+        self.y = self.y + height + 4
+        return btn
+    end
+
+    -- Add a CheckButton (checkbox). Returns the check button.
+    function lb:AddCheckbox(text, checked, xOffset)
+        local cb = CreateFrame("CheckButton", nil, self.parent, "UICheckButtonTemplate")
+        cb:SetSize(24, 24)
+        cb:SetPoint("TOPLEFT", self.parent, "TOPLEFT", xOffset or 0, -self.y)
+        cb:SetChecked(checked)
+        local label = cb:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        label:SetPoint("LEFT", cb, "RIGHT", 4, 0)
+        label:SetText(text or "")
+        cb._label = label
+        self.y = self.y + 28
+        return cb
+    end
+
+    -- Add an EditBox. Returns the edit box.
+    function lb:AddEditBox(text, width, xOffset)
+        local eb = CreateFrame("EditBox", nil, self.parent, "InputBoxTemplate")
+        eb:SetSize(width or 200, 22)
+        eb:SetPoint("TOPLEFT", self.parent, "TOPLEFT", (xOffset or 0) + 6, -self.y)
+        eb:SetAutoFocus(false)
+        eb:SetText(text or "")
+        self.y = self.y + 26
+        return eb
+    end
+
+    -- Add a Slider. Returns the slider.
+    function lb:AddSlider(minVal, maxVal, step, value, width)
+        local s = CreateFrame("Slider", nil, self.parent, "OptionsSliderTemplate")
+        s:SetWidth(width or 300)
+        s:SetHeight(17)
+        s:SetPoint("TOPLEFT", self.parent, "TOPLEFT", 8, -self.y - 10)
+        s:SetMinMaxValues(minVal, maxVal)
+        s:SetValueStep(step or 1)
+        s:SetObeyStepOnDrag(true)
+        s:SetValue(value or minVal)
+        -- Hide the default low/high text
+        if s.Low then s.Low:SetText("") end
+        if s.High then s.High:SetText("") end
+        if s.Text then s.Text:SetText("") end
+        self.y = self.y + 30
+        return s
+    end
+
+    -- Add a horizontal row of buttons/items. Give it a height, returns a frame.
+    -- Callers anchor children inside manually using "LEFT".
+    function lb:AddRow(height)
+        return self:AddFrame(height or 28)
+    end
+
+    -- Add a coloured bar section header
+    function lb:AddHeader(text)
+        local fs = self.parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        fs:SetFont(Utils.Font(GameFontHighlight, 13))
+        fs:SetPoint("TOPLEFT", self.parent, "TOPLEFT", 0, -self.y)
+        fs:SetPoint("RIGHT", self.parent, "RIGHT", 0, 0)
+        fs:SetJustifyH("LEFT")
+        fs:SetText("|cffd4af37" .. text .. "|r")
+        self.y = self.y + 18
+        return fs
+    end
+
+    -- Set the parent frame height to total content (for ScrollFrame scroll child)
+    function lb:Finish()
+        self.parent:SetHeight(self.y + 8)
+    end
+
+    -- Get current Y offset
+    function lb:GetY()
+        return self.y
+    end
+
+    -- Set Y directly (e.g. for aligning after manual anchoring)
+    function lb:SetY(newY)
+        self.y = newY
+    end
+
+    return lb
 end
 
 -- ── Class colour ─────────────────────────────────────────────────────────────

@@ -51,6 +51,12 @@ end
 function Events.OnPlayerLogin()
     -- GUILD_ROSTER_UPDATE fires automatically on login in TBC Anniversary.
 
+    -- Register ourselves as an addon user immediately
+    local playerName = UnitName("player") or "Unknown"
+    local realm = GetRealmName and GetRealmName() or "Unknown"
+    local selfKey = GM.Utils.MemberKey(playerName, realm)
+    GM.Donations:SetAddonUser(selfKey, GM.version or "0.0.0")
+
     -- Announce our presence so other clients know we have the addon.
     -- Delay 5s to let AceComm settle after login.
     C_Timer.After(5, function()

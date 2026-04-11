@@ -1,31 +1,17 @@
 -- GuildMate: Member donation view
--- Personal status panel shown to non-officer guild members.
+-- Personal status panel — raw WoW frames, no AceGUI.
 
 local GM = LibStub("AceAddon-3.0"):GetAddon("GuildMate") ---@type table
-local AceGUI = LibStub("AceGUI-3.0")
-local Utils  = GM.Utils
+local Utils = GM.Utils
 
 local MemberView = {}
 GM.MemberView = MemberView
 
--- ── Visual constants ──────────────────────────────────────────────────────────
+-- ── Render ───────────────────────────────────────────────────────────────────
 
--- ── Render ────────────────────────────────────────────────────────────────────
-
-function MemberView:Render(container)
-    local outerContainer = container
-    container:ReleaseChildren()
-    container:SetLayout("Fill")
-
-    -- Wrap in scroll frame so content never clips
-    local scroll = AceGUI:Create("ScrollFrame")
-    scroll:SetLayout("List")
-    scroll:SetFullWidth(true)
-    scroll:SetFullHeight(true)
-    container:AddChild(scroll)
-
-    -- Redirect all rendering into the scroll frame
-    container = scroll
+function MemberView:Render()
+    local parent = GM.MainFrame:ClearContent()
+    local L = Utils.LayoutBuilder(parent)
 
     local playerName = UnitName("player") or "Unknown"
     local realm      = GetRealmName and GetRealmName() or "Unknown"
@@ -34,186 +20,273 @@ function MemberView:Render(container)
     local goal      = GM.DB:GetActiveGoal()
     local periodKey = goal and Utils.PeriodKey(time(), goal.period) or nil
     local donated   = (goal and periodKey) and GM.DB:GetDonated(memberKey, periodKey) or 0
-    local frac      = (goal and goal.goldAmount > 0) and math.min(1, donated / goal.goldAmount) or 0
+    local rawFrac   = (goal and goal.goldAmount > 0) and (donated / goal.goldAmount) or 0
+    local frac      = math.min(1, rawFrac)
     local color     = Utils.StatusColor(frac)
+    local periodsAhead = (goal and goal.goldAmount > 0 and rawFrac >= 1)
+        and math.floor(donated / goal.goldAmount) - 1 or 0
 
-    -- ── Title row with settings button ────────────────────────────────────────
-    local headerGroup = AceGUI:Create("SimpleGroup")
-    headerGroup:SetLayout("Flow")
-    headerGroup:SetFullWidth(true)
-    container:AddChild(headerGroup)
+    -- ── Header ───────────────────────────────────────────────────────────────
+    local headerRow = L:AddRow(32)
 
-    local title = AceGUI:Create("Label")
-    title:SetText("|cff4A90D9YOUR DONATION STATUS|r")
-    title:SetFont(Utils.Font(GameFontHighlight, 16))
-    title:SetRelativeWidth(0.9)
-    headerGroup:AddChild(title)
+    local titleFs = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    titleFs:SetFont(Utils.Font(GameFontHighlight, 16))
+    titleFs:SetPoint("LEFT", headerRow, "LEFT", 0, 0)
+    titleFs:SetText("|cffffffffYOUR DONATION STATUS|r")
 
-    local settingsBtn = AceGUI:Create("Button")
-    settingsBtn:SetText("⚙")
-    settingsBtn:SetWidth(38)
-    settingsBtn:SetCallback("OnClick", function()
+    local settingsBtn = CreateFrame("Button", nil, headerRow, "UIPanelButtonTemplate")
+    settingsBtn:SetSize(30, 24)
+    settingsBtn:SetPoint("RIGHT", headerRow, "RIGHT", 0, 0)
+    settingsBtn:SetText("")
+    local cogIcon = settingsBtn:CreateTexture(nil, "OVERLAY")
+    cogIcon:SetSize(16, 16)
+    cogIcon:SetPoint("CENTER")
+    cogIcon:SetTexture("Interface\\Scenarios\\ScenarioIcon-Interact")
+    settingsBtn:SetScript("OnClick", function()
         PlaySound(856)
-        GM.SettingsView:Render(outerContainer, function()
-            MemberView:Render(outerContainer)
-        end)
+        GM.SettingsView:Render(function() MemberView:Render() end)
     end)
-    headerGroup:AddChild(settingsBtn)
+    settingsBtn:SetScript("OnEnter", function(btn)
+        GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Settings")
+        GameTooltip:Show()
+    end)
+    settingsBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-    self:_AddSpacer(container, 8)
+    L:AddSpacer(8)
 
-    -- ── Status card ───────────────────────────────────────────────────────────
-    local card = AceGUI:Create("InlineGroup")
-    card:SetTitle("")
-    card:SetLayout("List")
-    card:SetFullWidth(true)
-    container:AddChild(card)
-
-    Utils.SetFrameColor(card.frame, color[1], color[2], color[3], 0.12, card)
-
+    -- ── Status card ──────────────────────────────────────────────────────────
     if goal then
+        local PAD = 10
+        local cardStartY = L:GetY()
+        L:SetMargins(PAD, PAD)
+        L:AddSpacer(PAD)
+
         -- Goal headline
-        local goalLine = AceGUI:Create("Label")
-        goalLine:SetText(string.format(
-            "|cffd4af37%s goal:|r  %s per member",
+        L:AddText(string.format("|cffd4af37%s goal:|r  %s per member",
             goal.period:gsub("^%l", string.upper),
-            Utils.FormatMoneyShort(goal.goldAmount)))
-        goalLine:SetFont(Utils.Font(GameFontHighlight, 14))
-        goalLine:SetFullWidth(true)
-        card:AddChild(goalLine)
+            Utils.FormatMoneyShort(goal.goldAmount)), 14)
 
         -- Period + time remaining
         local secsLeft = Utils.SecondsRemainingInPeriod(goal.period)
         local daysLeft = math.floor(secsLeft / 86400)
-        local periodLine = AceGUI:Create("Label")
-        periodLine:SetText(string.format("|cffaaaaaa%s  ·  %d day%s remaining|r",
-            Utils.PeriodLabel(periodKey), daysLeft, daysLeft == 1 and "" or "s"))
-        periodLine:SetFullWidth(true)
-        card:AddChild(periodLine)
+        L:AddText(string.format("|cffaaaaaa%s  ·  %d day%s remaining|r",
+            Utils.PeriodLabel(periodKey), daysLeft, daysLeft == 1 and "" or "s"), 11)
 
-        self:_AddSpacer(card, 6)
+        L:AddSpacer(8)
 
         -- Progress bar
         local pct = math.floor(frac * 100)
-        local barText = string.format("%s / %s  (%d%%)",
-            Utils.FormatMoneyShort(donated),
-            Utils.FormatMoneyShort(goal.goldAmount), pct)
-        local barWidget = Utils.CreateProgressBar(barText, frac, color[1], color[2], color[3])
-        card:AddChild(barWidget)
+        local barRow = L:AddFrame(18)
 
-        -- Numeric summary
-        local amtLine = AceGUI:Create("Label")
+        local track = barRow:CreateTexture(nil, "BACKGROUND")
+        track:SetAllPoints()
+        track:SetTexture("Interface\\RAIDFRAME\\Raid-Bar-Hp-Fill")
+        track:SetVertexColor(0.12, 0.12, 0.12, 0.9)
+
+        local fill = barRow:CreateTexture(nil, "BORDER")
+        fill:SetPoint("TOPLEFT")
+        fill:SetPoint("BOTTOMLEFT")
+        fill:SetTexture("Interface\\RAIDFRAME\\Raid-Bar-Hp-Fill")
+        fill:SetVertexColor(color[1], color[2], color[3], 0.85)
+        fill:SetWidth(1)
+
+        local barText = barRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        barText:SetPoint("LEFT", barRow, "LEFT", 6, 0)
+        barText:SetText(string.format("%s / %s  (%d%%)",
+            Utils.FormatMoneyShort(donated),
+            Utils.FormatMoneyShort(goal.goldAmount), pct))
+        barText:SetTextColor(1, 1, 1, 1)
+
+        barRow:SetScript("OnSizeChanged", function(_, w)
+            fill:SetWidth(math.max(1, w * frac))
+        end)
+
+        L:AddSpacer(8)
+
+        -- Summary
         local remaining = math.max(0, goal.goldAmount - donated)
         if frac >= 1.0 then
-            amtLine:SetText("|cff5fba47✔  Goal met!|r  You donated " ..
-                Utils.FormatMoneyShort(donated))
+            local periodWord = goal.period == "monthly" and "month" or "week"
+            local aheadStr = ""
+            if periodsAhead > 0 then
+                aheadStr = string.format("  |cff5fba47+%d %s%s ahead|r", periodsAhead, periodWord, periodsAhead > 1 and "s" or "")
+            end
+            L:AddText("|cff5fba47Goal met!|r  You donated " .. Utils.FormatMoneyShort(donated) .. aheadStr, 12)
         else
-            amtLine:SetText(string.format(
-                "%s donated  ·  |cffd9a400%s remaining|r  (%d%%)",
+            L:AddText(string.format("%s donated  ·  |cffd9a400%s remaining|r  (%d%%)",
                 Utils.FormatMoneyShort(donated),
-                Utils.FormatMoneyShort(remaining), pct))
+                Utils.FormatMoneyShort(remaining), pct), 12)
         end
-        amtLine:SetFullWidth(true)
-        card:AddChild(amtLine)
-
-        self:_AddSpacer(card, 4)
 
         -- Last deposit
         local rec = GM.DB.sv.donations[memberKey]
         if rec and rec.lastDeposit and rec.lastDeposit > 0 then
-            local lastLine = AceGUI:Create("Label")
-            lastLine:SetText("|cffaaaaaaLast deposit:  " ..
-                date("%b %d at %H:%M", rec.lastDeposit) .. "|r")
-            lastLine:SetFullWidth(true)
-            card:AddChild(lastLine)
+            L:AddText("|cffaaaaaaLast deposit:  " .. date("%b %d at %H:%M", rec.lastDeposit) .. "|r", 11)
         end
 
-        -- Hint for members
-        self:_AddSpacer(card, 4)
-        local hint = AceGUI:Create("Label")
-        hint:SetText("|cffaaaaaa💡  Deposits you make to the guild bank are tracked automatically.|r")
-        hint:SetFullWidth(true)
-        card:AddChild(hint)
+        -- Hint
+        L:AddText("|cffaaaaaaDeposits you make to the guild bank are tracked automatically.|r", 11)
+
+        L:AddSpacer(PAD)
+        L:SetMargins(0, 0)
+
+        -- Paint card background + border with status colour
+        local cardH = L:GetY() - cardStartY
+        local cardBg = CreateFrame("Frame", nil, parent)
+        cardBg:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -cardStartY)
+        cardBg:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
+        cardBg:SetHeight(cardH)
+        cardBg:SetFrameLevel(parent:GetFrameLevel())
+        Utils.SetFrameColor(cardBg, color[1], color[2], color[3], 0.10)
+
+        -- Border in status colour
+        local bc = color
+        local function Edge(p1, r1, p2, r2, w, h)
+            local t = cardBg:CreateTexture(nil, "BORDER")
+            t:SetPoint(p1, cardBg, r1)
+            t:SetPoint(p2, cardBg, r2)
+            if w then t:SetWidth(w) end
+            if h then t:SetHeight(h) end
+            t:SetColorTexture(bc[1], bc[2], bc[3], 0.6)
+        end
+        Edge("TOPLEFT", "TOPLEFT", "TOPRIGHT", "TOPRIGHT", nil, 1)
+        Edge("BOTTOMLEFT", "BOTTOMLEFT", "BOTTOMRIGHT", "BOTTOMRIGHT", nil, 1)
+        Edge("TOPLEFT", "TOPLEFT", "BOTTOMLEFT", "BOTTOMLEFT", 1, nil)
+        Edge("TOPRIGHT", "TOPRIGHT", "BOTTOMRIGHT", "BOTTOMRIGHT", 1, nil)
     else
-        -- No active goal
-        local noGoal = AceGUI:Create("Label")
-        noGoal:SetText("|cffaaaaaaNo donation goal has been set by an officer yet.|r")
-        noGoal:SetFullWidth(true)
-        card:AddChild(noGoal)
+        local noGoalRow = L:AddFrame(40)
+        Utils.SetFrameColor(noGoalRow, 0.15, 0.15, 0.15, 0.3)
+        local fs = noGoalRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        fs:SetPoint("LEFT", noGoalRow, "LEFT", 10, 0)
+        fs:SetText("|cffaaaaaaNo donation goal has been set by an officer yet.|r")
     end
 
-    -- ── History ───────────────────────────────────────────────────────────────
-    self:_AddSpacer(container, 14)
-
-    local histTitle = AceGUI:Create("Label")
-    histTitle:SetText("|cffccccccHISTORY|r")
-    histTitle:SetFont(Utils.Font(GameFontHighlight, 12))
-    histTitle:SetFullWidth(true)
-    container:AddChild(histTitle)
+    -- ── History ──────────────────────────────────────────────────────────────
+    L:AddSpacer(14)
+    L:AddText("|cffccccccHISTORY|r", 12, GameFontHighlight)
+    L:AddSpacer(4)
 
     local rec = GM.DB.sv.donations[memberKey]
     if rec and rec.records then
-        -- Sort period keys descending
         local periods = {}
         for k in pairs(rec.records) do periods[#periods + 1] = k end
         table.sort(periods, function(a, b) return a > b end)
 
-        -- Show up to 6 recent periods
         local shown = 0
         for _, pk in ipairs(periods) do
             if shown >= 6 then break end
             shown = shown + 1
 
-            local amt      = rec.records[pk]
-            local goalAmt  = goal and goal.goldAmount or 0
-            local hfrac    = (goalAmt > 0) and math.min(1, amt / goalAmt) or 1
-            local hcolor   = Utils.StatusColor(hfrac)
-            local hcolorHex = string.format("|cff%02x%02x%02x", hcolor[1]*255, hcolor[2]*255, hcolor[3]*255)
+            local amt     = GM.DB:GetDonated(memberKey, pk)
+            local goalAmt = goal and goal.goldAmount or 0
+            local hfrac   = (goalAmt > 0) and math.min(1, amt / goalAmt) or 1
+            local hcolor  = Utils.StatusColor(hfrac)
 
-            local row = AceGUI:Create("SimpleGroup")
-            row:SetLayout("Flow")
-            row:SetFullWidth(true)
-            row:SetHeight(26)
-            container:AddChild(row)
+            local row = L:AddFrame(28)
+            Utils.SetFrameColor(row, hcolor[1], hcolor[2], hcolor[3], 0.20)
 
-            Utils.SetFrameColor(row.frame, hcolor[1], hcolor[2], hcolor[3], 0.20, row)
+            local colorHex = string.format("|cff%02x%02x%02x", hcolor[1]*255, hcolor[2]*255, hcolor[3]*255)
+            local dotFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            dotFs:SetPoint("LEFT", row, "LEFT", 6, 0)
+            dotFs:SetText(colorHex .. "●|r")
 
-            local iconLbl = AceGUI:Create("Label")
-            iconLbl:SetText(hcolorHex .. "●|r")
-            iconLbl:SetWidth(22)
-            row:AddChild(iconLbl)
+            local periodFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            periodFs:SetPoint("LEFT", row, "LEFT", 26, 0)
+            periodFs:SetText(Utils.PeriodLabel(pk))
 
-            local periodLbl = AceGUI:Create("Label")
-            periodLbl:SetText(Utils.PeriodLabel(pk))
-            periodLbl:SetWidth(200)
-            row:AddChild(periodLbl)
-
-            local amtLbl = AceGUI:Create("Label")
-            amtLbl:SetText(Utils.FormatMoneyShort(amt))
-            amtLbl:SetRelativeWidth(1.0)
-            row:AddChild(amtLbl)
+            local amtFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            amtFs:SetPoint("LEFT", row, "LEFT", 230, 0)
+            amtFs:SetText(Utils.FormatMoneyShort(amt))
         end
 
         if #periods == 0 then
-            local empty = AceGUI:Create("Label")
-            empty:SetText("|cffaaaaaaNo donation history yet.|r")
-            empty:SetFullWidth(true)
-            container:AddChild(empty)
+            L:AddText("|cffaaaaaaNo donation history yet.|r", 12)
         end
     else
-        local empty = AceGUI:Create("Label")
-        empty:SetText("|cffaaaaaaNo donation history yet.|r")
-        empty:SetFullWidth(true)
-        container:AddChild(empty)
+        L:AddText("|cffaaaaaaNo donation history yet.|r", 12)
     end
-end
 
--- ── Helpers ───────────────────────────────────────────────────────────────────
+    -- ── Guild Donation Logs ──────────────────────────────────────────────────
+    L:AddSpacer(14)
+    L:AddText("|cffccccccGUILD DONATION LOGS|r", 12, GameFontHighlight)
+    L:AddSpacer(4)
 
-function MemberView:_AddSpacer(container, height)
-    local spacer = AceGUI:Create("Label")
-    spacer:SetText(" ")
-    spacer:SetFullWidth(true)
-    spacer:SetHeight(height or 8)
-    container:AddChild(spacer)
+    -- Collect all donations across all members and periods
+    local allEntries = {}
+    local roster = GM.Donations:GetRoster()
+
+    for mk, mRec in pairs(GM.DB.sv.donations) do
+        if mRec and mRec.records then
+            local info = roster[mk]
+            local eName = info and info.name or mk
+            local eClass = info and info.classFilename or "WARRIOR"
+
+            for pk, val in pairs(mRec.records) do
+                local amt
+                if type(val) == "table" then
+                    amt = math.max(val.own or 0, val.synced or 0)
+                else
+                    amt = val
+                end
+                if amt > 0 then
+                    allEntries[#allEntries + 1] = {
+                        name          = eName,
+                        classFilename = eClass,
+                        periodKey     = pk,
+                        amount        = amt,
+                    }
+                end
+            end
+        end
+    end
+
+    -- Sort: most recent period first, then by name
+    table.sort(allEntries, function(a, b)
+        if a.periodKey ~= b.periodKey then return a.periodKey > b.periodKey end
+        return a.name < b.name
+    end)
+
+    if #allEntries == 0 then
+        L:AddText("|cffaaaaaaNo guild donation records found.|r", 12)
+    else
+        local lastPeriod = nil
+        for _, entry in ipairs(allEntries) do
+            if entry.periodKey ~= lastPeriod then
+                lastPeriod = entry.periodKey
+                L:AddSpacer(4)
+                L:AddText("|cffd4af37" .. Utils.PeriodLabel(entry.periodKey) .. "|r", 12)
+                L:AddSpacer(2)
+            end
+
+            local logRow = L:AddFrame(24)
+            logRow:EnableMouse(true)
+
+            local logBg = logRow:CreateTexture(nil, "BACKGROUND")
+            logBg:SetAllPoints()
+            logBg:SetTexture("Interface\\Buttons\\WHITE8X8")
+            logBg:SetVertexColor(0.15, 0.15, 0.15, 0.2)
+
+            logRow:SetScript("OnEnter", function() logBg:SetVertexColor(0.2, 0.2, 0.2, 0.4) end)
+            logRow:SetScript("OnLeave", function() logBg:SetVertexColor(0.15, 0.15, 0.15, 0.2) end)
+
+            local classColor = Utils.ClassColor(entry.classFilename)
+            local classHex = string.format("|cff%02x%02x%02x",
+                classColor[1] * 255, classColor[2] * 255, classColor[3] * 255)
+
+            local nameFs = logRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            nameFs:SetPoint("LEFT", logRow, "LEFT", 8, 0)
+            nameFs:SetWidth(180)
+            nameFs:SetJustifyH("LEFT")
+            nameFs:SetText(classHex .. entry.name .. "|r")
+
+            local amtFs = logRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            amtFs:SetPoint("LEFT", logRow, "LEFT", 200, 0)
+            amtFs:SetWidth(120)
+            amtFs:SetJustifyH("LEFT")
+            amtFs:SetText("|cffd4af37" .. Utils.FormatMoneyShort(entry.amount) .. "|r")
+        end
+    end
+
+    L:Finish()
 end

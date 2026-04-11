@@ -1,0 +1,41 @@
+package-as: GuildMate
+
+externals:
+  Libs/LibStub:
+    url: https://repos.curseforge.com/wow/libstub/trunk
+    tag: latest
+  Libs/CallbackHandler-1.0:
+    url: https://repos.curseforge.com/wow/callbackhandler/trunk/CallbackHandler-1.0
+    tag: latest
+  Libs/AceAddon-3.0:
+    url: https://repos.curseforge.com/wow/ace3/trunk/AceAddon-3.0
+    tag: latest
+  Libs/AceEvent-3.0:
+    url: https://repos.curseforge.com/wow/ace3/trunk/AceEvent-3.0
+    tag: latest
+  Libs/AceConsole-3.0:
+    url: https://repos.curseforge.com/wow/ace3/trunk/AceConsole-3.0
+    tag: latest
+  Libs/AceComm-3.0:
+    url: https://repos.curseforge.com/wow/ace3/trunk/AceComm-3.0
+    tag: latest
+  Libs/AceLocale-3.0:
+    url: https://repos.curseforge.com/wow/ace3/trunk/AceLocale-3.0
+    tag: latest
+  Libs/ChatThrottleLib:
+    url: https://repos.curseforge.com/wow/chatthrottlelib/trunk
+    tag: latest
+  Libs/LibDataBroker-1.1:
+    url: https://repos.curseforge.com/wow/libdatabroker-1-1
+    tag: latest
+  Libs/LibDBIcon-1.0:
+    url: https://repos.curseforge.com/wow/libdbicon-1-0/trunk/LibDBIcon-1.0
+    tag: latest
+
+ignore:
+  - .github
+  - .gitignore
+  - .pkgmeta
+  - CLAUDE.md
+  - docs
+  - Updates.md
