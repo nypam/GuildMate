@@ -297,6 +297,27 @@ function MainFrame:GetContent()
     return self._scrollChild
 end
 
+function MainFrame:GetScrollPosition()
+    if self._scrollFrame then
+        return self._scrollFrame:GetVerticalScroll()
+    end
+    return 0
+end
+
+function MainFrame:SetScrollPosition(pos)
+    if self._scrollFrame and pos then
+        C_Timer.After(0, function()
+            if MainFrame._scrollFrame then
+                local child = MainFrame._scrollChild
+                if child then
+                    local maxScroll = math.max(0, child:GetHeight() - MainFrame._scrollFrame:GetHeight())
+                    MainFrame._scrollFrame:SetVerticalScroll(math.min(pos, maxScroll))
+                end
+            end
+        end)
+    end
+end
+
 -- ── Public API ───────────────────────────────────────────────────────────────
 
 function MainFrame:SelectModule(id)

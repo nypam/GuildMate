@@ -8,7 +8,11 @@ local GM = LibStub("AceAddon-3.0"):NewAddon("GuildMate",
     "AceComm-3.0"
 )
 
-GM.version = "0.1.0"
+do
+    local v = (GetAddOnMetadata or C_AddOns and C_AddOns.GetAddOnMetadata or function() end)("GuildMate", "Version")
+    if not v or v:find("project%-version") then v = "0.3.1-dev" end
+    GM.version = v
+end
 GM.L = LibStub("AceLocale-3.0"):GetLocale("GuildMate")
 
 -- ── Lifecycle ─────────────────────────────────────────────────────────────────
@@ -150,6 +154,66 @@ function GM:SlashCommand(input)
         self:Print("|cff4A90D9GuildMate:|r Scan saved. Do /reload then open:")
         self:Print("|cffffd700WTF/Account/<name>/SavedVariables/GuildMate.lua|r")
         self:Print("Look for debugScan = { ... } near the top.")
+    elseif input == "sync" then
+        self:Print("|cff4A90D9GuildMate:|r Sending sync request to guild...")
+
+        -- Broadcast HELLO so others share their data back
+        GM:SendCommMessage("GuildMate", "HELLO|" .. (GM.version or "0.0.0"), "GUILD")
+
+        -- Broadcast our own data
+        local goal = GM.DB:GetActiveGoal()
+        if goal and GM.Donations and GM.Donations.BroadcastGoal then
+            GM.Donations:BroadcastGoal(goal)
+            self:Print("  → Goal broadcasted: " .. GM.Utils.FormatMoneyShort(goal.goldAmount) .. " " .. goal.period)
+        else
+            self:Print("  → No active goal to broadcast")
+        end
+
+        if GM.Donations and GM.Donations.BroadcastKnownTotals then
+            GM.Donations:BroadcastKnownTotals()
+            self:Print("  → Donation totals broadcasted")
+        end
+
+        if GM.Professions and GM.Professions.ScanSelf then
+            GM.Professions:ScanSelf()
+            self:Print("  → Professions broadcasted")
+        end
+
+        self:Print("|cff5fba47Sync complete.|r Other online members will receive your data shortly.")
+
+    elseif input == "status" then
+        -- Debug: show what's in the local DB
+        local goal = GM.DB:GetActiveGoal()
+        self:Print("|cff4A90D9GuildMate status:|r")
+        if goal then
+            self:Print("  Goal: " .. GM.Utils.FormatMoneyShort(goal.goldAmount) .. " " .. goal.period .. " (id=" .. goal.id .. ")")
+        else
+            self:Print("  Goal: |cffcc3333NONE|r")
+        end
+
+        local donationCount = 0
+        if GM.DB.sv.donations then
+            for _ in pairs(GM.DB.sv.donations) do donationCount = donationCount + 1 end
+        end
+        self:Print("  Donation records: " .. donationCount)
+
+        local profCount = 0
+        if GM.DB.sv.professions then
+            for _ in pairs(GM.DB.sv.professions) do profCount = profCount + 1 end
+        end
+        self:Print("  Profession records: " .. profCount)
+
+        local recipeProfs = 0
+        if GM.DB.sv.recipes then
+            for _ in pairs(GM.DB.sv.recipes) do recipeProfs = recipeProfs + 1 end
+        end
+        self:Print("  Recipe professions: " .. recipeProfs)
+
+        local addonUsers = GM.Donations and GM.Donations:GetAddonUsers() or {}
+        local addonCount = 0
+        for _ in pairs(addonUsers) do addonCount = addonCount + 1 end
+        self:Print("  Addon users known: " .. addonCount)
+
     elseif input == "help" then
         self:Print(GM.L["CMD_HELP_HEADER"])
         self:Print(GM.L["CMD_HELP_TOGGLE"])

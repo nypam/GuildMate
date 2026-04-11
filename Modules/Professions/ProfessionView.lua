@@ -505,16 +505,18 @@ function ProfessionView:_RenderRecipes(L, parent, professionName)
             if not isSelected then bgTex:SetVertexColor(0.10, 0.10, 0.10, 0.3) end
         end)
 
-        -- Click to select/deselect
+        -- Click to select/deselect (preserve scroll position)
         local recipeName = recipe.name
         row:SetScript("OnMouseUp", function()
             PlaySound(856)
+            local scrollPos = GM.MainFrame:GetScrollPosition()
             if _selectedRecipe == recipeName then
                 _selectedRecipe = nil
             else
                 _selectedRecipe = recipeName
             end
             ProfessionView:RenderProfession(professionName)
+            GM.MainFrame:SetScrollPosition(scrollPos)
         end)
 
         -- Recipe icon (stored during scan via GetTradeSkillIcon)
