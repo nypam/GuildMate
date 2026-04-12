@@ -37,11 +37,12 @@ GM._VersionKey = _VersionKey
 --   - Self: always accepted.
 --   - Known sender (we've seen their HELLO): accept iff their version is
 --     >= MIN_COMPAT_VERSION.
---   - Unknown sender: ACCEPT. We can't tell yet whether they're outdated or
---     just haven't HELLO'd us. Rejecting by default was too aggressive —
---     after a DB flush, addonUsers is empty and we'd drop everything until
---     a handshake round-tripped. Current wire formats are backward-compatible
---     so accepting from unknown senders is safe.
+--   - Unknown sender: REJECT. We can't verify their version, so we fire
+--     an opportunistic HELLO to discover it and drop this message. The
+--     sender will re-broadcast on their next real event (bank open, etc.)
+--     once they've recorded our HELLO and replied with theirs. This is
+--     stricter than the old accept-on-unknown policy but prevents a
+--     single outdated client from polluting the guild's data.
 function GM:IsSenderCompatible(sender)
     if not sender then return false end
 
@@ -51,7 +52,10 @@ function GM:IsSenderCompatible(sender)
     if rawSender == me then return true end
 
     local addonUsers = self.DB and self.DB.sv and self.DB.sv.addonUsers
-    if not addonUsers then return true end  -- no tracking yet, be permissive
+    if not addonUsers then
+        self:_OpportunisticHello()
+        return false
+    end
 
     local realm = GetRealmName and GetRealmName() or "Unknown"
     local sn, sr = sender:match("^(.+)-(.+)$")
@@ -61,11 +65,9 @@ function GM:IsSenderCompatible(sender)
 
     local theirVersion = addonUsers[mk]
     if not theirVersion then
-        -- Unknown sender: accept, but trigger a HELLO back so we learn
-        -- their version on the next round-trip. Debounced via the existing
-        -- bidirectional-handshake logic.
+        -- Unknown sender: announce ourselves and drop this message.
         self:_OpportunisticHello()
-        return true
+        return false
     end
     return _VersionKey(theirVersion) >= _VersionKey(self.MIN_COMPAT_VERSION)
 end
