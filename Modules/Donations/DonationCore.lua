@@ -332,10 +332,11 @@ function Donations:ProcessTransactionLog()
 
     if changed then
         GM.MainFrame:RefreshActiveView()
+        -- Only broadcast aggregated totals when we actually added events.
+        -- Otherwise every bank open would fire a full DONATION_BATCH blast
+        -- to the guild — pure noise when nothing changed.
+        Donations:BroadcastKnownTotals()
     end
-
-    -- Broadcast aggregated totals for backward compatibility with old clients
-    Donations:BroadcastKnownTotals()
 end
 
 -- ── Goal broadcast ───────────────────────────────────────────────────────────
