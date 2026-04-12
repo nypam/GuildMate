@@ -490,20 +490,72 @@ end
 -- Enchanting uses CraftFrame + GetCraft* APIs, not TradeSkill. This is a TBC
 -- quirk — enchanting was built as a "craft" before the tradeskill system existed.
 
+-- Slot patterns for enchanting recipes. Maps locale-specific keywords found
+-- in recipe names to a canonical English slot name + display order.
+-- Example recipe names we're trying to classify:
+--   English: "Enchant Bracer - Brawn", "Enchant Weapon - Superior Striking"
+--   French:  "Enchantement de poignets - Vigueur"
+-- Order matters inside each slot's pattern list: check more specific keywords
+-- first (e.g. "2H Weapon" before "Weapon") so we don't misclassify.
+local ENCHANT_SLOTS = {
+    -- { displayName, sortOrder, { pattern, pattern, ... } }
+    -- English patterns are case-insensitive; Lua `%a` matches letters only.
+    { "Helm",       1,  { "Helm", "Heaume", "Casque" } },
+    { "Shoulder",   2,  { "Shoulder", "\195\137paules", "\195\137paulettes", "\195\137paulires" } },
+    { "Cloak",      3,  { "Cloak", "Cape" } },
+    { "Chest",      4,  { "Chest", "Plastron", "Torse" } },
+    { "Bracer",     5,  { "Bracer", "Poignets" } },
+    { "Gloves",     6,  { "Gloves", "Gants" } },
+    { "Boots",      7,  { "Boots", "Bottes" } },
+    { "2H Weapon",  8,  { "2H Weapon", "2%-Handed", "Two%-Handed", "deux mains", "2 mains" } },
+    { "Weapon",     9,  { "Weapon", "Arme" } },
+    { "Shield",     10, { "Shield", "Bouclier" } },
+    { "Ring",       11, { "Ring", "Anneau" } },
+}
+
+-- Classify an enchanting recipe by slot. Returns (slotName, slotOrder) or nil.
+local function _DetectEnchantSlot(recipeName)
+    if not recipeName or recipeName == "" then return nil end
+    local lname = recipeName:lower()
+    for _, entry in ipairs(ENCHANT_SLOTS) do
+        local slot, order, patterns = entry[1], entry[2], entry[3]
+        for _, pat in ipairs(patterns) do
+            if lname:find(pat:lower(), 1, false) then
+                return slot, order
+            end
+        end
+    end
+    return nil
+end
+
+-- Set of enchanting slot names we generate — used below to detect stale
+-- category data that needs to be upgraded to slot-based grouping.
+local ENCHANT_SLOT_SET = {
+    Helm = true, Shoulder = true, Cloak = true, Chest = true,
+    Bracer = true, Gloves = true, Boots = true,
+    ["2H Weapon"] = true, Weapon = true, Shield = true, Ring = true,
+}
+
 -- Returns true if ANY of our locally-scanned recipes for the given profession
--- are missing category info — a signal that we need to force a re-scan so the
--- new category-capturing code can fill them in.
+-- are missing or outdated category info — a signal that we need to force a
+-- re-scan so the latest categorization code can fill them in.
+-- For Enchanting, "outdated" also means category values that aren't one of
+-- our slot names (e.g. stored generic "Enchant" from an earlier version).
 local function _NeedsRecategorize(profName)
     local db = GM.DB.sv.recipes2 and GM.DB.sv.recipes2[profName]
     if not db then return false end
     local playerName = UnitName("player") or "?"
     local realm = GetRealmName and GetRealmName() or "?"
     local mk = GM.Utils.MemberKey(playerName, realm)
+    local isEnchanting = (profName == "Enchanting")
     for _, data in pairs(db) do
         if data.crafters then
             for _, ck in ipairs(data.crafters) do
-                if ck == mk and not data.category then
-                    return true
+                if ck == mk then
+                    if not data.category then return true end
+                    if isEnchanting and not ENCHANT_SLOT_SET[data.category] then
+                        return true
+                    end
                 end
             end
         end
@@ -637,10 +689,20 @@ function Professions:_DoScanCraftRecipes()
             local recipe = db[profName][key]
             recipe.fallbackName = name
 
-            -- Store category + in-window position for grouped, ordered display
-            if currentCategory then
+            -- For Enchanting, prefer slot-based grouping (Helm, Shoulder,
+            -- Cloak, Chest, ...) which is far more useful than the generic
+            -- "Enchant"/"Enchantement" category that Blizzard ships.
+            -- Fall back to the window's native category if slot detection
+            -- fails (e.g. an oddly-named recipe like "Runed Arcanite Rod").
+            local slot, slotOrder = _DetectEnchantSlot(name)
+            if slot then
+                recipe.category = slot
+                recipe.categoryOrder = slotOrder
+            elseif currentCategory then
                 recipe.category = currentCategory
-                recipe.categoryOrder = seenCategories[currentCategory]
+                -- Push unslotted recipes below the slotted ones by offsetting
+                -- their order above the known slot count.
+                recipe.categoryOrder = 100 + (seenCategories[currentCategory] or 0)
             end
             recipe.recipeOrder = recipeOrder
 
