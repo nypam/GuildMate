@@ -258,6 +258,109 @@ function Professions:GetRecipeList(professionName)
     return result
 end
 
+-- ── Scan status toast ───────────────────────────────────────────────────────
+-- Small floating indicator anchored below the tradeskill/craft window so the
+-- user knows we're scanning + broadcasting and should keep the window open.
+
+local _scanToast = nil
+local _scanToastHideTimer = nil
+
+local function _GetScanToast()
+    if _scanToast then return _scanToast end
+
+    local f = CreateFrame("Frame", "GuildMateScanToast", UIParent)
+    f:SetSize(260, 42)
+    f:SetFrameStrata("DIALOG")
+    f:Hide()
+
+    local bg = f:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetTexture("Interface\\Buttons\\WHITE8X8")
+    bg:SetVertexColor(0.05, 0.05, 0.08, 0.92)
+    f._bg = bg
+
+    -- Border (1px, colored to match state)
+    local function Edge(p1, r1, p2, r2, w, h)
+        local t = f:CreateTexture(nil, "BORDER")
+        t:SetPoint(p1, f, r1)
+        t:SetPoint(p2, f, r2)
+        if w then t:SetWidth(w) end
+        if h then t:SetHeight(h) end
+        return t
+    end
+    f._borderTop    = Edge("TOPLEFT", "TOPLEFT", "TOPRIGHT", "TOPRIGHT", nil, 1)
+    f._borderBottom = Edge("BOTTOMLEFT", "BOTTOMLEFT", "BOTTOMRIGHT", "BOTTOMRIGHT", nil, 1)
+    f._borderLeft   = Edge("TOPLEFT", "TOPLEFT", "BOTTOMLEFT", "BOTTOMLEFT", 1, nil)
+    f._borderRight  = Edge("TOPRIGHT", "TOPRIGHT", "BOTTOMRIGHT", "BOTTOMRIGHT", 1, nil)
+
+    -- GuildMate accent strip (left edge)
+    local accent = f:CreateTexture(nil, "ARTWORK")
+    accent:SetWidth(3)
+    accent:SetPoint("TOPLEFT", f, "TOPLEFT", 0, 0)
+    accent:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 0, 0)
+    accent:SetTexture("Interface\\Buttons\\WHITE8X8")
+    accent:SetVertexColor(0.29, 0.56, 0.85, 0.9)  -- GuildMate blue
+
+    -- Label
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("TOPLEFT", f, "TOPLEFT", 10, -6)
+    title:SetText("|cff4A90D9Guild|r|cffffffffMate|r")
+    f._title = title
+
+    local msg = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    msg:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -2)
+    msg:SetPoint("RIGHT", f, "RIGHT", -10, 0)
+    msg:SetJustifyH("LEFT")
+    f._msg = msg
+
+    _scanToast = f
+    return f
+end
+
+local function _SetBorderColor(f, r, g, b, a)
+    for _, side in ipairs({ f._borderTop, f._borderBottom, f._borderLeft, f._borderRight }) do
+        side:SetColorTexture(r, g, b, a)
+    end
+end
+
+local function _AnchorToast(f)
+    -- Prefer the profession window that's actually showing
+    if _G["TradeSkillFrame"] and TradeSkillFrame:IsShown() then
+        f:ClearAllPoints()
+        f:SetPoint("TOP", TradeSkillFrame, "BOTTOM", 0, -4)
+        return true
+    elseif _G["CraftFrame"] and CraftFrame:IsShown() then
+        f:ClearAllPoints()
+        f:SetPoint("TOP", CraftFrame, "BOTTOM", 0, -4)
+        return true
+    end
+    return false
+end
+
+local function _ShowScanToast(message, color)
+    local f = _GetScanToast()
+    if not _AnchorToast(f) then return end  -- no window open; skip
+    f._msg:SetText(color .. message .. "|r")
+    _SetBorderColor(f, 0.29, 0.56, 0.85, 0.7)
+    f:Show()
+    if _scanToastHideTimer then
+        _scanToastHideTimer:Cancel()
+        _scanToastHideTimer = nil
+    end
+end
+
+local function _CompleteScanToast(message)
+    local f = _scanToast
+    if not f or not f:IsShown() then return end
+    f._msg:SetText("|cff5fba47" .. message .. "|r")
+    _SetBorderColor(f, 0.37, 0.73, 0.28, 0.9)  -- green success
+    if _scanToastHideTimer then _scanToastHideTimer:Cancel() end
+    _scanToastHideTimer = C_Timer.NewTimer(4, function()
+        if _scanToast then _scanToast:Hide() end
+        _scanToastHideTimer = nil
+    end)
+end
+
 -- ── Recipe scanning ──────────────────────────────────────────────────────────
 
 -- Extract spellID from a tradeskill recipe link.
@@ -286,10 +389,19 @@ function Professions:ScanRecipes()
     self._scanningRecipes = true
     self._lastRecipeScan = now
 
-    local ok, err = pcall(function() self:_DoScanRecipes() end)
+    _ShowScanToast("Scanning recipes — keep this window open\226\128\166", "|cffffffff")
+
+    local scanResult
+    local ok, err = pcall(function() scanResult = self:_DoScanRecipes() end)
     self._scanningRecipes = false
     if not ok then
         GM:Print("|cffcc3333GuildMate:|r ScanRecipes error: " .. tostring(err))
+        return
+    end
+
+    if scanResult then
+        _CompleteScanToast(string.format("Synced %d %s recipes to the guild",
+            scanResult.count or 0, scanResult.profName or "?"))
     end
 end
 
@@ -461,6 +573,8 @@ function Professions:_DoScanRecipes()
         self:BroadcastRecipes(memberKey, profName)
         GM.MainFrame:RefreshActiveView()
     end
+
+    return { count = recipeOrder, profName = profName, changed = changed }
 end
 
 -- ── Enchanting (Craft API — different from TradeSkill in TBC) ──────────────
@@ -476,10 +590,19 @@ function Professions:ScanCraftRecipes()
     self._scanningCraft = true
     self._lastCraftScan = now
 
-    local ok, err = pcall(function() self:_DoScanCraftRecipes() end)
+    _ShowScanToast("Scanning enchants — keep this window open\226\128\166", "|cffffffff")
+
+    local scanResult
+    local ok, err = pcall(function() scanResult = self:_DoScanCraftRecipes() end)
     self._scanningCraft = false
     if not ok then
         GM:Print("|cffcc3333GuildMate:|r ScanCraftRecipes error: " .. tostring(err))
+        return
+    end
+
+    if scanResult then
+        _CompleteScanToast(string.format("Synced %d %s recipes to the guild",
+            scanResult.count or 0, scanResult.profName or "?"))
     end
 end
 
@@ -608,6 +731,8 @@ function Professions:_DoScanCraftRecipes()
         self:BroadcastRecipes(memberKey, profName)
         GM.MainFrame:RefreshActiveView()
     end
+
+    return { count = recipeOrder, profName = profName, changed = changed }
 end
 
 -- ── Recipe comm: broadcast ───────────────────────────────────────────────────
