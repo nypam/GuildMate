@@ -453,14 +453,17 @@ function Donations:OnCommReceived(message, _channel, sender)
         end
 
     elseif cmd == "DONATION_TOTAL" then
-        -- Legacy: single DONATION_TOTAL|memberKey|periodKey|total (backward compat)
+        -- Legacy single-message format from pre-v0.4.1 clients. Old clients
+        -- spam this every few seconds per member. We still honor the data
+        -- (via SetDonationTotal → max-merge, no synthetic) but aggressively
+        -- debounce the UI refresh to prevent layout thrash.
         local _, memberKey, periodKey, totalStr = message:match("^([%w_]+)|([^|]+)|([^|]+)|(%d+)$")
         local total = tonumber(totalStr)
         if memberKey and periodKey and total then
             GM.DB:SetDonationTotal(memberKey, periodKey, total)
             if not Donations._refreshPending then
                 Donations._refreshPending = true
-                C_Timer.After(0.5, function()
+                C_Timer.After(2, function()
                     Donations._refreshPending = false
                     GM.MainFrame:RefreshActiveView()
                 end)
@@ -479,11 +482,9 @@ function Donations:OnCommReceived(message, _channel, sender)
             local wasKnown = GM.DB.sv.addonUsers and GM.DB.sv.addonUsers[senderKey] ~= nil
             Donations:SetAddonUser(senderKey, version)
 
-            -- Handshake: if this sender was previously unknown to us, send
-            -- our own HELLO back so they also learn our version. Without
-            -- this, the version gate would drop our broadcasts on their
-            -- side until their *next* login. Debounced so two newcomers
-            -- greeting each other don't ping-pong forever.
+            -- Handshake reply: send our HELLO back to a previously-unknown
+            -- sender so they learn our version. Guild-wide debounced (10s)
+            -- so concurrent new-sender bursts only produce one reply.
             if not wasKnown then
                 local lastSent = GM._lastHelloSentAt or 0
                 local now = GetTime()
@@ -496,8 +497,21 @@ function Donations:OnCommReceived(message, _channel, sender)
                 end
             end
 
-            -- New member just came online — share everything we have
-            -- so they don't have to wait for bank open or tradeskill scan.
+            -- Per-sender debounce for the data dump. Without this, any flurry
+            -- of HELLOs (new member login storm, addonUsers flush, loopy old
+            -- clients that re-HELLO every few seconds) triggers a dump per
+            -- HELLO — each dump being 5+ large messages. A single sender's
+            -- dump should happen at most once per 5 minutes.
+            Donations._helloDumpSentAt = Donations._helloDumpSentAt or {}
+            local last = Donations._helloDumpSentAt[senderKey] or 0
+            local now = GetTime()
+            if (now - last) < 300 then
+                return
+            end
+            Donations._helloDumpSentAt[senderKey] = now
+
+            -- Welcome data dump — share everything we have so the new member
+            -- doesn't have to wait for a bank open or tradeskill scan.
             C_Timer.After(2, function()
                 local goal = GM.DB:GetActiveGoal()
                 if goal and Donations.BroadcastGoal then
@@ -506,11 +520,9 @@ function Donations:OnCommReceived(message, _channel, sender)
                 if Donations.BroadcastKnownTotals then
                     Donations:BroadcastKnownTotals()
                 end
-                -- New format: send individual events for richer data
                 if Donations.BroadcastDonationLog then
                     Donations:BroadcastDonationLog(60)
                 end
-                -- Broadcast professions + recipes
                 if GM.Professions then
                     local myName = UnitName("player") or "Unknown"
                     local myRealm = GetRealmName and GetRealmName() or "Unknown"
@@ -518,7 +530,6 @@ function Donations:OnCommReceived(message, _channel, sender)
                     if GM.Professions.BroadcastProfessions then
                         GM.Professions:BroadcastProfessions(myKey)
                     end
-                    -- Broadcast recipes for each profession we have data for
                     if GM.Professions.BroadcastRecipes and GM.DB.sv.recipes2 then
                         for profName in pairs(GM.DB.sv.recipes2) do
                             GM.Professions:BroadcastRecipes(myKey, profName)

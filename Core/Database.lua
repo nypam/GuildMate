@@ -651,22 +651,22 @@ end
 -- Sets a member's period total to max(current, newTotal).
 -- Safe to call multiple times — never decreases a total.
 --
--- If the detailed donationLog already contains real events for this member+
--- period, we TRUST the log and skip synthetic creation — otherwise a
--- DONATION_BATCH arriving alongside DEPOSIT_BATCH would double-count the same
--- deposits (once as a real event, once as a synthetic gap).
---
--- Synthetics are only created when no real events exist yet — i.e. when we're
--- receiving aggregated data from an old client that doesn't broadcast the
--- individual events.
+-- NOTE: we used to create "synthetic" events in donationLog to preserve
+-- aggregate totals received before per-deposit DEPOSIT events arrived. That
+-- caused runaway double-counting because real events would later cover the
+-- same amount without removing the synthetic. We no longer touch donationLog
+-- here — aggregate totals live in rec.records[periodKey], and real event
+-- detail is added exclusively via AddDonationEvent().
 function DB:SetDonationTotal(memberKey, periodKey, newTotal)
+    if not memberKey or not periodKey or type(newTotal) ~= "number" then return end
+
     local rec = self:GetMemberRecord(memberKey)
     local current = rec.records[periodKey] or 0
     if type(current) == "table" then
         current = math.max(current.own or 0, current.synced or 0)
     end
 
-    -- Compute the real (non-synthetic) log sum for this member+period.
+    -- Compute the real log sum so we never store less than what the log says.
     local realLogSum = 0
     for _, e in ipairs(self.sv.donationLog or {}) do
         if e.memberKey == memberKey and e.periodKey == periodKey and not e.synthetic then
@@ -674,37 +674,10 @@ function DB:SetDonationTotal(memberKey, periodKey, newTotal)
         end
     end
 
-    -- If the detailed log already accounts for (or exceeds) newTotal, the
-    -- aggregated total is redundant — don't touch the log.
-    if realLogSum >= newTotal then
-        if newTotal > current then
-            rec.records[periodKey] = math.max(current, realLogSum)
-        end
-        return
-    end
-
-    if newTotal > current then
-        rec.records[periodKey] = newTotal
+    local finalTotal = math.max(current, newTotal, realLogSum)
+    if finalTotal > current then
+        rec.records[periodKey] = finalTotal
         rec.lastDeposit = time()
-
-        -- Only the portion NOT covered by real events needs a synthetic.
-        local gap = newTotal - realLogSum
-        if gap > 0 then
-            local syntheticId = "syn:" .. memberKey .. ":" .. periodKey .. ":" .. newTotal
-            self.sv.donationLogSeen = self.sv.donationLogSeen or {}
-            if not self.sv.donationLogSeen[syntheticId] then
-                self.sv.donationLog = self.sv.donationLog or {}
-                self.sv.donationLog[#self.sv.donationLog + 1] = {
-                    id        = syntheticId,
-                    timestamp = 0,  -- unknown
-                    memberKey = memberKey,
-                    amount    = gap,
-                    periodKey = periodKey,
-                    synthetic = true,
-                }
-                self.sv.donationLogSeen[syntheticId] = true
-            end
-        end
     end
 end
 
