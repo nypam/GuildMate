@@ -275,7 +275,16 @@ function Professions:ScanRecipes()
     -- Re-entrancy guard: expanding headers / resetting filters fires
     -- TRADE_SKILL_UPDATE, which would call us again and loop forever.
     if self._scanningRecipes then return end
+
+    -- Time-based debounce: TRADE_SKILL_UPDATE fires many times per window
+    -- open (once per filter change, once per header expand). Without this,
+    -- 10+ deferred scans stack up and freeze the game iterating 100+ recipes
+    -- and calling expensive APIs (GetTradeSkillRecipeLink, etc.) each time.
+    local now = GetTime()
+    if self._lastRecipeScan and (now - self._lastRecipeScan) < 5 then return end
+
     self._scanningRecipes = true
+    self._lastRecipeScan = now
 
     local ok, err = pcall(function() self:_DoScanRecipes() end)
     self._scanningRecipes = false
@@ -296,21 +305,13 @@ function Professions:_DoScanRecipes()
 
     if not getNumTS or not getTSInfo then return end
 
-    -- Reset filters so category headers appear in the iteration.
-    -- TBC: sub-class / slot filters and "Have materials" hide headers from
-    -- GetTradeSkillInfo. We reset to show-all before scanning. The tradeskill
-    -- UI will re-render with no filter; that's an acceptable side-effect given
-    -- the alternative is recipes landing under "Other" forever.
-    local setSubClass = _G["SetTradeSkillSubClassFilter"]
-    local setInvSlot = _G["SetTradeSkillInvSlotFilter"]
-    local setMakeable = _G["TradeSkillOnlyShowMakeable"]
-    local setSkillUps = _G["TradeSkillOnlyShowSkillUps"]
-    if setSubClass then pcall(setSubClass, 0, 1, 1) end
-    if setInvSlot then pcall(setInvSlot, 0, 1, 1) end
-    if setMakeable then pcall(setMakeable, false) end
-    if setSkillUps then pcall(setSkillUps, false) end
-
-    -- Expand every header so recipes within are enumerated.
+    -- Expand every header so recipes within are enumerated and we can
+    -- capture their category. Each Expand call fires TRADE_SKILL_UPDATE,
+    -- but our re-entrancy guard + 5s debounce prevent a cascade.
+    -- NOTE: we deliberately do NOT reset the user's filters — doing so
+    -- fires extra events and causes visible UI stutter. If a user has a
+    -- filter active, scanned recipes will miss categories — they can
+    -- remove the filter and re-open to rescan.
     local expandFn = _G["ExpandTradeSkillSubClass"]
     if expandFn then
         local n = getNumTS() or 0
@@ -468,7 +469,12 @@ end
 
 function Professions:ScanCraftRecipes()
     if self._scanningCraft then return end
+
+    local now = GetTime()
+    if self._lastCraftScan and (now - self._lastCraftScan) < 5 then return end
+
     self._scanningCraft = true
+    self._lastCraftScan = now
 
     local ok, err = pcall(function() self:_DoScanCraftRecipes() end)
     self._scanningCraft = false
