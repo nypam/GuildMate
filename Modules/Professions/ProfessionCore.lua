@@ -283,6 +283,30 @@ function Professions:ScanRecipes()
 
     if not getNumTS or not getTSInfo then return end
 
+    -- Reset filters so category headers appear in the iteration.
+    -- TBC: sub-class / slot filters and "Have materials" hide headers from
+    -- GetTradeSkillInfo. We reset to show-all before scanning. The tradeskill
+    -- UI will re-render with no filter; that's an acceptable side-effect given
+    -- the alternative is recipes landing under "Other" forever.
+    local setSubClass = _G["SetTradeSkillSubClassFilter"]
+    local setInvSlot = _G["SetTradeSkillInvSlotFilter"]
+    local setMakeable = _G["TradeSkillOnlyShowMakeable"]
+    local setSkillUps = _G["TradeSkillOnlyShowSkillUps"]
+    if setSubClass then pcall(setSubClass, 0, 1, 1) end
+    if setInvSlot then pcall(setInvSlot, 0, 1, 1) end
+    if setMakeable then pcall(setMakeable, false) end
+    if setSkillUps then pcall(setSkillUps, false) end
+
+    -- Expand every header so recipes within are enumerated.
+    local expandFn = _G["ExpandTradeSkillSubClass"]
+    if expandFn then
+        local n = getNumTS() or 0
+        for i = n, 1, -1 do
+            local _, sType = getTSInfo(i)
+            if sType == "header" then pcall(expandFn, i) end
+        end
+    end
+
     local numSkills = getNumTS()
     if not numSkills or numSkills == 0 then return end
 
