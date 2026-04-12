@@ -256,21 +256,10 @@ function DebugView:Render()
             local badgeR, badgeG, badgeB = 0.37, 0.73, 0.28  -- green for in
             local labelColor = "|cff5fba47"
             local labelText = "in"
-            -- ChatFrameExpandArrow is a plain white right-pointing triangle.
-            -- Rotate it 90° CW (down ▼) for "in", 90° CCW (up ▲) for "out".
-            local coordUL1, coordUL2 = 1, 0
-            local coordLL1, coordLL2 = 0, 0
-            local coordUR1, coordUR2 = 1, 1
-            local coordLR1, coordLR2 = 0, 1
             if not isIn then
                 badgeR, badgeG, badgeB = 0.85, 0.64, 0.00     -- orange for out
                 labelColor = "|cffd9a400"
                 labelText = "out"
-                -- 90° CCW: up arrow
-                coordUL1, coordUL2 = 0, 1
-                coordLL1, coordLL2 = 1, 1
-                coordUR1, coordUR2 = 0, 0
-                coordLR1, coordLR2 = 1, 0
             end
 
             local badge = CreateFrame("Frame", nil, row)
@@ -282,15 +271,25 @@ function DebugView:Render()
             badgeBg:SetTexture("Interface\\Buttons\\WHITE8X8")
             badgeBg:SetVertexColor(badgeR, badgeG, badgeB, 0.85)
 
-            local arrow = badge:CreateTexture(nil, "OVERLAY")
-            arrow:SetSize(8, 8)
-            arrow:SetPoint("CENTER", badge, "CENTER", 0, 0)
-            arrow:SetTexture("Interface\\ChatFrame\\ChatFrameExpandArrow")
-            arrow:SetTexCoord(coordUL1, coordUL2, coordLL1, coordLL2,
-                              coordUR1, coordUR2, coordLR1, coordLR2)
-            -- Strip the yellow/gold tint baked into the texture, then paint white.
-            if arrow.SetDesaturated then arrow:SetDesaturated(true) end
-            arrow:SetVertexColor(1, 1, 1, 1)
+            -- Fully-white triangle drawn from stacked 1-px WHITE8X8 strips.
+            -- Avoids greyscale artifacts from Blizzard's shaded arrow assets
+            -- (ChatFrameExpandArrow + SetDesaturated still renders mid-tones).
+            local TRI_H = 6     -- triangle height in pixels
+            local stepW = 2     -- each line is 2px wider than the previous
+            for row_i = 0, TRI_H - 1 do
+                -- For "in" (down arrow): wide on top, narrow on bottom.
+                -- For "out" (up arrow): narrow on top, wide on bottom.
+                local fromTop = isIn and row_i or (TRI_H - 1 - row_i)
+                local strip = badge:CreateTexture(nil, "OVERLAY")
+                strip:SetTexture("Interface\\Buttons\\WHITE8X8")
+                strip:SetVertexColor(1, 1, 1, 1)
+                local w = (TRI_H - fromTop) * stepW
+                strip:SetSize(w, 1)
+                -- Anchor each strip to badge center, offset vertically by row.
+                -- Triangle occupies y = -(TRI_H/2-0.5) .. +(TRI_H/2-0.5) from center.
+                local yOffset = (TRI_H / 2 - 0.5) - row_i
+                strip:SetPoint("CENTER", badge, "CENTER", 0, yOffset)
+            end
 
             local dirFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
             dirFs:SetPoint("LEFT", badge, "RIGHT", 4, 0)
