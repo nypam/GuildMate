@@ -1029,74 +1029,76 @@ end
 
 -- ── Event registration ───────────────────────────────────────────────────────
 
+-- Coalesce multiple scan triggers into a single run. Opening a tradeskill or
+-- craft window fires TRADE_SKILL_SHOW / CRAFT_SHOW, the _UPDATE event once
+-- or several times as recipe data populates, and our OnShow hook — each of
+-- which used to schedule its own deferred scan. That caused 3+ "Scanning..."
+-- messages per window open. We now cancel-and-reschedule a single timer so
+-- the scan runs exactly once after the event burst settles.
+function Professions:_QueueTradeSkillScan()
+    if self._tradeSkillScanTimer then self._tradeSkillScanTimer:Cancel() end
+    self._tradeSkillScanTimer = C_Timer.NewTimer(0.6, function()
+        self._tradeSkillScanTimer = nil
+        Professions:ScanSelf()
+        Professions:ScanRecipes()
+    end)
+end
+
+function Professions:_QueueCraftScan()
+    if self._craftScanTimer then self._craftScanTimer:Cancel() end
+    self._craftScanTimer = C_Timer.NewTimer(0.6, function()
+        self._craftScanTimer = nil
+        Professions:ScanSelf()
+        Professions:ScanCraftRecipes()
+    end)
+end
+
 function Professions:RegisterEvents()
     -- Scan on login (delayed to let skill data load)
     C_Timer.After(12, function()
         Professions:ScanSelf()
     end)
 
-    -- Re-scan when tradeskill window opens (catches level-ups + recipes)
+    -- Tradeskill window events — all coalesced into one scan
     pcall(function()
         GM:RegisterEvent("TRADE_SKILL_SHOW", function()
-            C_Timer.After(0.5, function()
-                Professions:ScanSelf()
-                Professions:ScanRecipes()
-            end)
+            Professions:_QueueTradeSkillScan()
         end)
     end)
-
-    -- Fallback: hook TradeSkillFrame if event doesn't fire (TBC Anniversary)
-    C_Timer.After(3, function()
-        if _G["TradeSkillFrame"] then
-            if not TradeSkillFrame._gmHooked then
-                TradeSkillFrame._gmHooked = true
-                TradeSkillFrame:HookScript("OnShow", function()
-                    C_Timer.After(0.5, function()
-                        Professions:ScanSelf()
-                        Professions:ScanRecipes()
-                    end)
-                end)
-            end
-        end
-        -- Enchanting uses the separate Craft API / CraftFrame
-        if _G["CraftFrame"] then
-            if not CraftFrame._gmHooked then
-                CraftFrame._gmHooked = true
-                CraftFrame:HookScript("OnShow", function()
-                    C_Timer.After(0.5, function()
-                        Professions:ScanSelf()
-                        Professions:ScanCraftRecipes()
-                    end)
-                end)
-            end
-        end
-    end)
-
     pcall(function()
         GM:RegisterEvent("TRADE_SKILL_UPDATE", function()
-            C_Timer.After(0.5, function()
-                Professions:ScanSelf()
-                Professions:ScanRecipes()
-            end)
+            Professions:_QueueTradeSkillScan()
         end)
     end)
 
     -- Enchanting: Craft API events (separate from TradeSkill)
     pcall(function()
         GM:RegisterEvent("CRAFT_SHOW", function()
-            C_Timer.After(0.5, function()
-                Professions:ScanSelf()
-                Professions:ScanCraftRecipes()
-            end)
+            Professions:_QueueCraftScan()
         end)
     end)
     pcall(function()
         GM:RegisterEvent("CRAFT_UPDATE", function()
-            C_Timer.After(0.5, function()
-                Professions:ScanSelf()
-                Professions:ScanCraftRecipes()
-            end)
+            Professions:_QueueCraftScan()
         end)
+    end)
+
+    -- Fallback: hook the frames in case the events don't fire (TBC Anniversary
+    -- sometimes misses them). The HookScript OnShow callback just queues the
+    -- same coalesced scan, so no duplicate work.
+    C_Timer.After(3, function()
+        if _G["TradeSkillFrame"] and not TradeSkillFrame._gmHooked then
+            TradeSkillFrame._gmHooked = true
+            TradeSkillFrame:HookScript("OnShow", function()
+                Professions:_QueueTradeSkillScan()
+            end)
+        end
+        if _G["CraftFrame"] and not CraftFrame._gmHooked then
+            CraftFrame._gmHooked = true
+            CraftFrame:HookScript("OnShow", function()
+                Professions:_QueueCraftScan()
+            end)
+        end
     end)
 
     -- Also scan when skill lines change (level up a gathering prof, etc.)
