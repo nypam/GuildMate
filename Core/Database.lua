@@ -61,27 +61,57 @@ function DB:Init()
     self:_Migrate(GuildMateDB)
     self.sv = GuildMateDB
 
-    -- Heal any double-counting introduced by the old SetDonationTotal behavior.
-    -- Backs up first so the user can always /gm restore if needed.
+    -- Heal any double-counting introduced by the old SetDonationTotal code.
+    -- Two stages:
+    --   1. Remove synthetic log entries that duplicate real events.
+    --   2. Recompute every period total from the log so bloated
+    --      rec.records[pk] values are overwritten with the real sum.
+    -- Backs up first so /gm restore can undo the heal if needed.
     if self.sv.donationLog and #self.sv.donationLog > 0 then
         local hasSynthetics = false
         for _, e in ipairs(self.sv.donationLog) do
             if e.synthetic then hasSynthetics = true; break end
         end
+
+        -- Always recompute from the log so bloated aggregates get corrected,
+        -- even if synthetics were already cleaned on a prior reload.
+        local didBackup = false
         if hasSynthetics then
             self:BackupDonations("pre-synthetic-cleanup")
-            local removed = self:CleanupSyntheticDonations()
-            if removed > 0 then
-                -- Defer the chat print until the addon is fully initialized.
-                C_Timer.After(3, function()
-                    if GM and GM.Print then
-                        GM:Print("|cff4A90D9GuildMate:|r healed " .. removed ..
-                            " duplicate donation entr" ..
-                            (removed == 1 and "y" or "ies") ..
-                            ". Backup saved; use |cffffd700/gm restore|r to undo.")
-                    end
-                end)
+            didBackup = true
+            self:CleanupSyntheticDonations()
+        end
+
+        -- Collect unique (memberKey, periodKey) pairs and recompute each.
+        local healed = 0
+        local seen = {}
+        for _, e in ipairs(self.sv.donationLog) do
+            local key = (e.memberKey or "") .. "::" .. (e.periodKey or "")
+            if not seen[key] and e.memberKey and e.periodKey and not e.synthetic then
+                seen[key] = true
+                local rec = self:GetMemberRecord(e.memberKey)
+                local before = rec.records[e.periodKey] or 0
+                if type(before) == "table" then
+                    before = math.max(before.own or 0, before.synced or 0)
+                end
+                self:_RecomputePeriodTotal(e.memberKey, e.periodKey)
+                local after = rec.records[e.periodKey] or 0
+                if after < before then healed = healed + 1 end
             end
+        end
+
+        if healed > 0 then
+            if not didBackup then
+                self:BackupDonations("pre-total-heal")
+            end
+            C_Timer.After(3, function()
+                if GM and GM.Print then
+                    GM:Print("|cff4A90D9GuildMate:|r healed " .. healed ..
+                        " bloated donation total" .. (healed == 1 and "" or "s") ..
+                        " (trusted real-event log). Backup saved; use " ..
+                        "|cffffd700/gm restore|r to undo.")
+                end
+            end)
         end
     end
 end
@@ -603,14 +633,22 @@ function DB:AddDonationEvent(event)
     return true
 end
 
--- Rebuild donations[memberKey][periodKey] by summing events from the log.
--- Takes the MAX of (log sum, existing stored total) to preserve pre-log data.
+-- Rebuild donations[memberKey][periodKey] from the log.
+-- If we have real events for this period, their sum is authoritative — we
+-- overwrite the stored total (including healing any pre-existing bloat from
+-- old synthetic-based code paths). If we have no real events, preserve the
+-- stored aggregate so data received via DONATION_BATCH from other clients
+-- isn't lost.
 function DB:_RecomputePeriodTotal(memberKey, periodKey)
-    local logSum = 0
+    local realSum = 0
+    local hasReal = false
     local latestTs = 0
     for _, e in ipairs(self.sv.donationLog or {}) do
         if e.memberKey == memberKey and e.periodKey == periodKey then
-            logSum = logSum + (e.amount or 0)
+            if not e.synthetic then
+                realSum = realSum + (e.amount or 0)
+                hasReal = true
+            end
             if (e.timestamp or 0) > latestTs then latestTs = e.timestamp end
         end
     end
@@ -621,9 +659,18 @@ function DB:_RecomputePeriodTotal(memberKey, periodKey)
         existing = math.max(existing.own or 0, existing.synced or 0)
     end
 
-    -- Use max so we never lose pre-log aggregated data
-    rec.records[periodKey] = math.max(logSum, existing)
-    rec.lastDeposit = math.max(rec.lastDeposit or 0, latestTs)
+    if hasReal then
+        -- Log wins: overwrite with the real sum so stale/bloated aggregates
+        -- are healed on next scan or incoming event.
+        rec.records[periodKey] = realSum
+    else
+        -- No detail available — keep whatever aggregate we have.
+        rec.records[periodKey] = existing
+    end
+
+    if latestTs > 0 then
+        rec.lastDeposit = math.max(rec.lastDeposit or 0, latestTs)
+    end
 end
 
 -- Check if a log event with this id has been seen
@@ -666,17 +713,35 @@ function DB:SetDonationTotal(memberKey, periodKey, newTotal)
         current = math.max(current.own or 0, current.synced or 0)
     end
 
-    -- Compute the real log sum so we never store less than what the log says.
+    -- Count real (non-synthetic) events we already have for this period.
     local realLogSum = 0
+    local hasRealEvents = false
     for _, e in ipairs(self.sv.donationLog or {}) do
         if e.memberKey == memberKey and e.periodKey == periodKey and not e.synthetic then
             realLogSum = realLogSum + (e.amount or 0)
+            hasRealEvents = true
         end
     end
 
-    local finalTotal = math.max(current, newTotal, realLogSum)
-    if finalTotal > current then
-        rec.records[periodKey] = finalTotal
+    -- If we have real event detail for this period, the log is authoritative.
+    -- Reject any aggregate that disagrees — otherwise one client's bloated DB
+    -- (e.g. from legacy synthetic double-counts) propagates across the guild
+    -- via DONATION_BATCH and poisons everyone.
+    if hasRealEvents then
+        if realLogSum > current then
+            rec.records[periodKey] = realLogSum
+            rec.lastDeposit = time()
+        elseif current ~= realLogSum then
+            -- current was already bloated/stale — heal it.
+            rec.records[periodKey] = realLogSum
+        end
+        return
+    end
+
+    -- No real events: trust the incoming aggregate, max-merge so we don't
+    -- drop totals a different client previously shared with us.
+    if newTotal > current then
+        rec.records[periodKey] = newTotal
         rec.lastDeposit = time()
     end
 end
