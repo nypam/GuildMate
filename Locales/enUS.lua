@@ -93,6 +93,7 @@ L["LAST_DEPOSIT"]         = "Last deposit:  %s"
 L["AUTO_TRACK_HINT"]      = "Deposits you make to the guild bank are tracked automatically."
 L["NO_GOAL_SET"]          = "No donation goal has been set by an officer yet."
 L["GOAL_NOT_APPLICABLE"]  = "The current donation goal does not apply to your rank."
+L["GOAL_APPLIES_TO"]      = "Applies to: %s"
 L["HISTORY"]              = "HISTORY"
 L["NO_HISTORY"]           = "No donation history yet."
 

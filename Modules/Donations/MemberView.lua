@@ -21,7 +21,9 @@ function MemberView:Render()
 
     local goal      = GM.DB:GetActiveGoal()
 
-    -- Hide goal if it doesn't apply to the player's rank
+    -- Does the goal apply to this player's rank? If not, we still render the
+    -- goal card in grey so reroll / alt ranks can see what the main goal is,
+    -- but we skip the personal progress (they're not expected to donate).
     local goalApplies = true
     if goal then
         local _, _, playerRankIndex = GetGuildInfo("player")
@@ -29,14 +31,14 @@ function MemberView:Render()
             goalApplies = false
         end
     end
-    if not goalApplies then goal = nil end
 
     local periodKey = goal and Utils.PeriodKey(time(), goal.period) or nil
-    local donated   = (goal and periodKey) and GM.DB:GetDonated(memberKey, periodKey) or 0
-    local rawFrac   = (goal and goal.goldAmount > 0) and (donated / goal.goldAmount) or 0
+    local donated   = (goal and periodKey and goalApplies) and GM.DB:GetDonated(memberKey, periodKey) or 0
+    local rawFrac   = (goal and goal.goldAmount > 0 and goalApplies) and (donated / goal.goldAmount) or 0
     local frac      = math.min(1, rawFrac)
-    local color     = Utils.StatusColor(frac)
-    local periodsAhead = (goal and goal.goldAmount > 0 and rawFrac >= 1)
+    -- Grey palette when the goal is informational-only (doesn't apply to us).
+    local color     = goalApplies and Utils.StatusColor(frac) or { 0.55, 0.55, 0.55 }
+    local periodsAhead = (goal and goal.goldAmount > 0 and rawFrac >= 1 and goalApplies)
         and math.floor(donated / goal.goldAmount) - 1 or 0
 
     -- ── Header ───────────────────────────────────────────────────────────────
@@ -106,8 +108,33 @@ function MemberView:Render()
 
         L:AddSpacer(8)
 
-        -- Progress bar
-        local pct = math.floor(frac * 100)
+        -- Decide what the bar represents:
+        --  - When the goal applies: personal donated / goal amount.
+        --  - When it doesn't: guild-wide progress — members who have met the
+        --    goal / total members in the target ranks. Same visual, greyed.
+        local barFrac, barLabel
+        if goalApplies then
+            barFrac = frac
+            local pct = math.floor(frac * 100)
+            barLabel = string.format("%s / %s  (%d%%)",
+                Utils.FormatMoneyShort(donated),
+                Utils.FormatMoneyShort(goal.goldAmount), pct)
+        else
+            local roster = GM.Donations and GM.Donations:GetRoster() or {}
+            local total, met = 0, 0
+            for key, info in pairs(roster) do
+                if goal.targetRanks and goal.targetRanks[info.rankIndex] then
+                    total = total + 1
+                    if GM.DB:GetDonated(key, periodKey) >= goal.goldAmount then
+                        met = met + 1
+                    end
+                end
+            end
+            barFrac = (total > 0) and (met / total) or 0
+            local pct = math.floor(barFrac * 100)
+            barLabel = string.format("%d / %d members met  (%d%%)", met, total, pct)
+        end
+
         local barRow = L:AddFrame(18)
 
         local track = barRow:CreateTexture(nil, "BACKGROUND")
@@ -124,14 +151,29 @@ function MemberView:Render()
 
         local barText = barRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         barText:SetPoint("LEFT", barRow, "LEFT", 6, 0)
-        barText:SetText(string.format("%s / %s  (%d%%)",
-            Utils.FormatMoneyShort(donated),
-            Utils.FormatMoneyShort(goal.goldAmount), pct))
+        barText:SetText(barLabel)
         barText:SetTextColor(1, 1, 1, 1)
 
         barRow:SetScript("OnSizeChanged", function(_, w)
-            fill:SetWidth(math.max(1, w * frac))
+            fill:SetWidth(math.max(1, w * barFrac))
         end)
+
+        -- When the goal doesn't apply, append a grey "Applies to: ..." line
+        -- so the user understands who the goal is for.
+        if not goalApplies then
+            local rankNames = {}
+            if goal.targetRanks then
+                for i = 0, 9 do
+                    if goal.targetRanks[i] and GuildControlGetRankName then
+                        local rn = GuildControlGetRankName(i + 1)
+                        if rn and rn ~= "" then rankNames[#rankNames + 1] = rn end
+                    end
+                end
+            end
+            L:AddSpacer(4)
+            local rankList = #rankNames > 0 and table.concat(rankNames, ", ") or "\226\128\148"
+            L:AddText("|cff888888" .. string.format(GM.L["GOAL_APPLIES_TO"] or "Applies to: %s", rankList) .. "|r", 11)
+        end
 
         L:AddSpacer(PAD)
         L:SetMargins(0, 0)
@@ -154,8 +196,10 @@ function MemberView:Render()
         summaryFs:SetPoint("LEFT", summaryRow, "LEFT", 10, 0)
         summaryFs:SetJustifyH("LEFT")
 
-        local remaining = math.max(0, goal.goldAmount - donated)
-        if frac >= 1.0 then
+        if not goalApplies then
+            -- Informational — no personal progress to report.
+            summaryFs:SetText("|cffaaaaaa" .. GM.L["GOAL_NOT_APPLICABLE"] .. "|r")
+        elseif frac >= 1.0 then
             local pw = goal.period == "monthly" and GM.L["MONTH_FULL"] or GM.L["WEEK_FULL"]
             if periodsAhead > 0 then
                 summaryFs:SetText(string.format(GM.L["GOAL_MET_AHEAD"],
@@ -164,18 +208,22 @@ function MemberView:Render()
                 summaryFs:SetText(string.format(GM.L["GOAL_MET"], Utils.FormatMoneyShort(donated)))
             end
         else
+            local remaining = math.max(0, goal.goldAmount - donated)
+            local pct = math.floor(frac * 100)
             summaryFs:SetText(string.format(GM.L["DONATED_REMAINING"],
                 Utils.FormatMoneyShort(donated),
                 Utils.FormatMoneyShort(remaining), pct))
         end
 
-        -- Right: last deposit
-        local rec = GM.DB.sv.donations[memberKey]
-        if rec and rec.lastDeposit and rec.lastDeposit > 0 then
-            local lastFs = summaryRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            lastFs:SetPoint("RIGHT", summaryRow, "RIGHT", -10, 0)
-            lastFs:SetJustifyH("RIGHT")
-            lastFs:SetText("|cffaaaaaa" .. string.format(GM.L["LAST_DEPOSIT"], date("%b %d at %H:%M", rec.lastDeposit)) .. "|r")
+        -- Right: last deposit (only meaningful when the goal applies to us)
+        if goalApplies then
+            local rec = GM.DB.sv.donations[memberKey]
+            if rec and rec.lastDeposit and rec.lastDeposit > 0 then
+                local lastFs = summaryRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                lastFs:SetPoint("RIGHT", summaryRow, "RIGHT", -10, 0)
+                lastFs:SetJustifyH("RIGHT")
+                lastFs:SetText("|cffaaaaaa" .. string.format(GM.L["LAST_DEPOSIT"], date("%b %d at %H:%M", rec.lastDeposit)) .. "|r")
+            end
         end
 
         -- Parent border wrapping both containers
@@ -186,12 +234,12 @@ function MemberView:Render()
         outerBg:SetFrameLevel(parent:GetFrameLevel())
         PaintBorder(outerBg)
     else
+        -- No active goal at all
         local noGoalRow = L:AddFrame(40)
         Utils.SetFrameColor(noGoalRow, 0.15, 0.15, 0.15, 0.3)
         local fs = noGoalRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         fs:SetPoint("LEFT", noGoalRow, "LEFT", 10, 0)
-        local msg = goalApplies and GM.L["NO_GOAL_SET"] or GM.L["GOAL_NOT_APPLICABLE"]
-        fs:SetText("|cffaaaaaa" .. msg .. "|r")
+        fs:SetText("|cffaaaaaa" .. GM.L["NO_GOAL_SET"] .. "|r")
     end
 
     -- ── History ──────────────────────────────────────────────────────────────
