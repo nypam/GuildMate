@@ -272,6 +272,19 @@ local function _ExtractSpellID(link)
 end
 
 function Professions:ScanRecipes()
+    -- Re-entrancy guard: expanding headers / resetting filters fires
+    -- TRADE_SKILL_UPDATE, which would call us again and loop forever.
+    if self._scanningRecipes then return end
+    self._scanningRecipes = true
+
+    local ok, err = pcall(function() self:_DoScanRecipes() end)
+    self._scanningRecipes = false
+    if not ok then
+        GM:Print("|cffcc3333GuildMate:|r ScanRecipes error: " .. tostring(err))
+    end
+end
+
+function Professions:_DoScanRecipes()
     -- Only works when tradeskill window is open
     local getNumTS = _G["GetNumTradeSkills"]
     local getTSInfo = _G["GetTradeSkillInfo"]
@@ -454,6 +467,17 @@ end
 -- quirk — enchanting was built as a "craft" before the tradeskill system existed.
 
 function Professions:ScanCraftRecipes()
+    if self._scanningCraft then return end
+    self._scanningCraft = true
+
+    local ok, err = pcall(function() self:_DoScanCraftRecipes() end)
+    self._scanningCraft = false
+    if not ok then
+        GM:Print("|cffcc3333GuildMate:|r ScanCraftRecipes error: " .. tostring(err))
+    end
+end
+
+function Professions:_DoScanCraftRecipes()
     local getNumCrafts = _G["GetNumCrafts"]
     local getCraftInfo = _G["GetCraftInfo"]
     local getCraftName = _G["GetCraftName"]
@@ -651,6 +675,31 @@ function Professions:ScanSelf()
     if count == 0 then return end
 
     local db = _EnsureDB()
+    local existing = db[memberKey]
+
+    -- Dedupe: only broadcast if the skill data actually changed.
+    -- TRADE_SKILL_UPDATE and friends fire constantly; without this, we
+    -- send PROF_UPDATE on every event and melt the comm channel.
+    local unchanged = false
+    if existing and existing.skills then
+        unchanged = true
+        local oldCount = 0
+        for _ in pairs(existing.skills) do oldCount = oldCount + 1 end
+        if oldCount ~= count then
+            unchanged = false
+        else
+            for k, v in pairs(skills) do
+                local old = existing.skills[k]
+                if not old or old.rank ~= v.rank or old.maxRank ~= v.maxRank then
+                    unchanged = false
+                    break
+                end
+            end
+        end
+    end
+
+    if unchanged then return end
+
     db[memberKey] = {
         lastUpdate = time(),
         skills = skills,
