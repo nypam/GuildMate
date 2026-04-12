@@ -10,7 +10,7 @@ local GM = LibStub("AceAddon-3.0"):NewAddon("GuildMate",
 
 do
     local v = (GetAddOnMetadata or C_AddOns and C_AddOns.GetAddOnMetadata or function() end)("GuildMate", "Version")
-    if not v or v:find("project%-version") then v = "0.4.4-dev" end
+    if not v or v:find("project%-version") then v = "0.4.5-dev" end
     GM.version = v
 end
 GM.L = LibStub("AceLocale-3.0"):GetLocale("GuildMate")
@@ -20,7 +20,7 @@ GM.L = LibStub("AceLocale-3.0"):GetLocale("GuildMate")
 -- HELLO is always accepted (so we can discover old clients' versions and
 -- report them). Data messages (PROF_UPDATE, RECIPE_UPDATE, DONATION_*, etc.)
 -- from senders below this version are dropped.
-GM.MIN_COMPAT_VERSION = "0.4.4"
+GM.MIN_COMPAT_VERSION = "0.4.5"
 
 -- Parse "1.2.3" / "1.2.3-dev" / "v0.4.4" into a comparable integer key.
 -- Ignores trailing -suffix; missing components default to 0.

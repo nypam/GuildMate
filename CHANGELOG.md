@@ -4,6 +4,33 @@ All notable changes to GuildMate will be documented in this file.
 
 ## [Unreleased]
 
+## [v0.4.5] - 2026-04-12
+
+### Fixed
+- **Broadcast storm**: HELLO welcome dump removed — new logins no longer blast 5–50KB of data to the whole guild. HELLO now only exchanges versions; data propagates through real events (bank scans, goal edits, tradeskill opens) or explicit `/gm sync`.
+- **Idle bank opens silent**: `BroadcastKnownTotals` only fires when the bank scan actually adds new events. Previously blasted after every bank open.
+- **Donation double-counting healed**: synthetic event creation in `SetDonationTotal` removed. The real donation log is now authoritative; aggregates from other clients can only fill periods with no detail. `DB:Init()` re-runs the totals from the log on load, healing bloated values from older versions (auto-backup before touching anything).
+- **Scan spam**: re-scans while tradeskill/craft window stays open are silent unless new recipes were found. Only the first scan per window session announces.
+- **Enchanting categories**: missing headers were caused by not expanding collapsed sub-sections and over-strict header detection. Now expands via `ExpandCraftSkillLine` and falls back to "no reagents + no link = header" detection.
+
+### Added
+- **Per-sender rate limit** on incoming messages (60s sliding window, per-command caps). Runaway old clients can't saturate comm even when version-compatible.
+- **Strict version gate**: data from senders whose version we don't yet know is rejected (was previously accepted). We fire an opportunistic HELLO so both sides learn each other's versions on the next round-trip.
+- **Schema write lock** — `GuildMateDB.writeLock` records `MIN_COMPAT_VERSION` when a new-enough client runs. Older clients loading the same SavedVariables enter read-only mode and display a chat warning.
+- **Addon version per member** in the officer roster — green/amber/red square + compact version tag. Tooltip shows exact version and MIN_COMPAT_VERSION when outdated.
+- **Slot-based enchanting recipe grouping** (Helm → Shoulder → Cloak → Chest → Bracer → Gloves → Boots → 2H Weapon → Weapon → Shield → Ring) instead of Blizzard's generic "Enchant" category. English + French keyword detection.
+- **Category-ordered recipe lists** for all other professions — matches the in-game tradeskill window order (Potion → Elixir → Flask, etc.) instead of alphabetical. Category + position captured during scan and synced via `RECIPE_UPDATE` (extended wire format, backward-compatible with 3-field entries).
+- **Scan progress messages** — "Scanning recipes — keep this window open..." → "Synced N Alchemy recipes to the guild" printed to chat.
+- **Goal shown in grey** for off-rank members (e.g. Reroll). Personal progress bar switches to guild-wide "N / M members met" with an "Applies to: Officer, Raider" hint. Still informational only.
+- **Bidirectional HELLO handshake** — receiving a HELLO from an unknown sender sends one back so both sides sync versions without waiting for the next login.
+- **CurseForge build independence** — libraries are now fully vendored; builds no longer depend on `repos.curseforge.com` availability.
+
+### Changed
+- Live Comm Feed in Debug view: colored badge (green down arrow for incoming, orange up arrow for outgoing) drawn from WHITE8X8 strips for true-white rendering. Columns left-aligned with spacing.
+- Debug view: per-table "Last Update" column, refresh button on Comm Stats, destructive actions hidden when `/gm debug` is OFF.
+- Scan events coalesced into a single deferred run (cancel-and-reschedule 0.6s timer) instead of N queued timers — prevents freeze when tradeskill window pulses updates.
+- Filter resets no longer touch the user's tradeskill filter (caused UI stutter). If a filter is active, categories may be missing for some recipes — removing the filter and reopening rescans correctly.
+
 ## [v0.4.4] - 2026-04-12
 
 ### Added
