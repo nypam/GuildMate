@@ -742,28 +742,38 @@ function Professions:BroadcastRecipes(memberKey, profName)
     local profRecipes = db[profName]
     if not profRecipes then return end
 
-    -- Build list: "spellID~icon~reagents;..." where reagents = "name:count:icon,..."
+    -- Encode a string for the wire: escape backslash, field separators, and
+    -- list separators so reagent names / categories survive round-trip.
+    local function encode(s)
+        return (s or "")
+            :gsub("\\", "\\\\")
+            :gsub(":", "\\c")
+            :gsub(",", "\\m")
+            :gsub(";", "\\s")
+            :gsub("~", "\\t")
+            :gsub("|", "\\p")
+    end
+
+    -- Build list: "spellID~icon~catOrder~categoryName~reagents;..."
+    --   reagents = "name:count:icon,..."
+    -- Older v0.4.x clients expect 3-field entries (spellID~icon~reagents);
+    -- the new parser on the receiver side accepts both layouts.
     local parts = {}
     for spellIDStr, data in pairs(profRecipes) do
         for _, ck in ipairs(data.crafters) do
             if ck == memberKey then
                 local iconStr = data.icon and tostring(data.icon) or "0"
-                -- Encode reagents with backslash-based escaping (safe for all item names)
+                local catOrder = data.categoryOrder and tostring(data.categoryOrder) or "0"
+                local catName = encode(data.category or "")
                 local reagentParts = {}
                 if data.reagents then
                     for _, r in ipairs(data.reagents) do
                         local rIcon = r.icon and tostring(r.icon) or "0"
-                        local safeName = (r.name or "?")
-                            :gsub("\\", "\\\\")
-                            :gsub(":", "\\c")
-                            :gsub(",", "\\m")
-                            :gsub(";", "\\s")
-                            :gsub("~", "\\t")
-                        reagentParts[#reagentParts + 1] = safeName .. ":" .. (r.count or 1) .. ":" .. rIcon
+                        reagentParts[#reagentParts + 1] = encode(r.name or "?") .. ":" .. (r.count or 1) .. ":" .. rIcon
                     end
                 end
                 local reagentStr = #reagentParts > 0 and table.concat(reagentParts, ",") or ""
-                parts[#parts + 1] = spellIDStr .. "~" .. iconStr .. "~" .. reagentStr
+                parts[#parts + 1] = spellIDStr .. "~" .. iconStr .. "~" .. catOrder .. "~" .. catName .. "~" .. reagentStr
                 break
             end
         end
@@ -771,7 +781,7 @@ function Professions:BroadcastRecipes(memberKey, profName)
 
     if #parts == 0 then return end
 
-    -- RECIPE_UPDATE|memberKey|profName|spellID~icon~reagents;...
+    -- RECIPE_UPDATE|memberKey|profName|spellID~icon~catOrder~category~reagents;...
     local msg = string.format("RECIPE_UPDATE|%s|%s|%s",
         memberKey, profName, table.concat(parts, ";"))
 
@@ -867,25 +877,42 @@ function Professions:OnCommReceived(message, _channel, sender)
     local cmd = message:match("^([%w_]+)")
 
     if cmd == "RECIPE_UPDATE" then
-        -- RECIPE_UPDATE|memberKey|profName|spellID~icon;spellID~icon;...
+        -- Version gating happens in GM:OnCommReceived before we arrive here.
+
+        -- RECIPE_UPDATE|memberKey|profName|<entry>;<entry>;...
+        -- <entry> new format: spellID~icon~catOrder~category~reagents
+        -- <entry> old format: spellID~icon~reagents
         local _, memberKey, profName, recipeStr = message:match("^([%w_]+)|([^|]+)|([^|]+)|(.+)$")
         if not memberKey or not profName or not recipeStr then return true end
 
         local db = _EnsureRecipeDB()
         if not db[profName] then db[profName] = {} end
 
+        -- Reverse the encode() used in BroadcastRecipes.
+        local function decode(s)
+            if not s or s == "" then return nil end
+            return (s:gsub("\\p", "|"):gsub("\\t", "~"):gsub("\\s", ";")
+                     :gsub("\\m", ","):gsub("\\c", ":"):gsub("\\\\", "\\"))
+        end
+
         for entry in recipeStr:gmatch("[^;]+") do
-            -- Parse: spellID~icon~reagents or spellID~icon or spellID
-            local spellIDStr, iconStr, reagentStr = entry:match("^(%d+)~(%d+)~(.*)$")
+            -- Try new 5-field format first: spellID~icon~catOrder~category~reagents
+            local spellIDStr, iconStr, catOrderStr, catNameRaw, reagentStr =
+                entry:match("^(%d+)~(%d+)~(%d+)~([^~]*)~(.*)$")
+
+            -- Fallback to old 3-field: spellID~icon~reagents
+            if not spellIDStr then
+                spellIDStr, iconStr, reagentStr = entry:match("^(%d+)~(%d+)~(.*)$")
+            end
+            -- Older still: spellID~icon
             if not spellIDStr then
                 spellIDStr, iconStr = entry:match("^(%d+)~(%d+)$")
             end
             if not spellIDStr then
                 spellIDStr = entry:match("^(%d+)$")
             end
-            if not spellIDStr then
-                -- Legacy name-based entry, skip
-            else
+
+            if spellIDStr then
                 local key = spellIDStr
                 local iconID = tonumber(iconStr)
 
@@ -896,15 +923,24 @@ function Professions:OnCommReceived(message, _channel, sender)
                     db[profName][key].icon = iconID
                 end
 
+                -- Category info (new format only)
+                if catOrderStr then
+                    local catOrder = tonumber(catOrderStr) or 0
+                    if catOrder > 0 then
+                        db[profName][key].categoryOrder = catOrder
+                    end
+                end
+                if catNameRaw and catNameRaw ~= "" then
+                    db[profName][key].category = decode(catNameRaw)
+                end
+
                 -- Parse reagents if provided and we don't have them yet
                 if reagentStr and reagentStr ~= "" and #db[profName][key].reagents == 0 then
                     for rEntry in reagentStr:gmatch("[^,]+") do
                         local rName, rCount, rIcon = rEntry:match("^(.+):(%d+):(%d+)$")
                         if rName then
-                            -- Reverse backslash-based encoding (decode in reverse order)
-                            rName = rName:gsub("\\t", "~"):gsub("\\s", ";"):gsub("\\m", ","):gsub("\\c", ":"):gsub("\\\\", "\\")
                             db[profName][key].reagents[#db[profName][key].reagents + 1] = {
-                                name  = rName,
+                                name  = decode(rName),
                                 count = tonumber(rCount) or 1,
                                 icon  = tonumber(rIcon) or nil,
                             }

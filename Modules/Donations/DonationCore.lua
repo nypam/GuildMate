@@ -379,6 +379,9 @@ end
 function Donations:OnCommReceived(message, _channel, sender)
     local cmd = message:match("^([%w_]+)")
 
+    -- Note: version gating is centralized in GM:OnCommReceived. By the time
+    -- we get here, either this is HELLO or the sender is compatible.
+
     if cmd == "DEPOSIT" then
         -- DEPOSIT|memberKey|timestamp|amount|periodKey|eventId
         local _, mk, tsStr, amtStr, pk, eventId = message:match("^([%w_]+)|([^|]+)|(%d+)|(%d+)|([^|]+)|(.+)$")

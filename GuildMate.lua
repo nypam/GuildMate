@@ -10,10 +10,53 @@ local GM = LibStub("AceAddon-3.0"):NewAddon("GuildMate",
 
 do
     local v = (GetAddOnMetadata or C_AddOns and C_AddOns.GetAddOnMetadata or function() end)("GuildMate", "Version")
-    if not v or v:find("project%-version") then v = "0.4.2-dev" end
+    if not v or v:find("project%-version") then v = "0.4.4-dev" end
     GM.version = v
 end
 GM.L = LibStub("AceLocale-3.0"):GetLocale("GuildMate")
+
+-- Minimum version we will accept data messages from. Bump this when we make
+-- incompatible wire-format changes so older clients can't corrupt the DB.
+-- HELLO is always accepted (so we can discover old clients' versions and
+-- report them). Data messages (PROF_UPDATE, RECIPE_UPDATE, DONATION_*, etc.)
+-- from senders below this version are dropped.
+GM.MIN_COMPAT_VERSION = "0.4.4"
+
+-- Parse "1.2.3" / "1.2.3-dev" / "v0.4.4" into a comparable integer key.
+-- Ignores trailing -suffix; missing components default to 0.
+local function _VersionKey(v)
+    if type(v) ~= "string" or v == "" then return 0 end
+    v = v:gsub("^v", ""):gsub("%-.*$", "")
+    local a, b, c = v:match("^(%d+)%.?(%d*)%.?(%d*)")
+    return (tonumber(a) or 0) * 1000000 + (tonumber(b) or 0) * 1000 + (tonumber(c) or 0)
+end
+GM._VersionKey = _VersionKey
+
+-- Returns true if the given sender's tracked version is >= MIN_COMPAT_VERSION,
+-- or if the sender is the local player. Unknown senders (no HELLO yet) are
+-- rejected — they must HELLO first so we can see their version.
+function GM:IsSenderCompatible(sender)
+    if not sender then return false end
+
+    -- Always trust self
+    local me = UnitName("player") or ""
+    local rawSender = sender:match("^(.+)-[^-]+$") or sender
+    if rawSender == me then return true end
+
+    local addonUsers = self.DB and self.DB.sv and self.DB.sv.addonUsers
+    if not addonUsers then return false end
+
+    -- sender may arrive as "Name" or "Name-Realm"; addonUsers is keyed by MemberKey
+    local realm = GetRealmName and GetRealmName() or "Unknown"
+    local sn, sr = sender:match("^(.+)-(.+)$")
+    sn = sn or sender
+    sr = sr or realm
+    local mk = self.Utils.MemberKey(sn, sr)
+
+    local theirVersion = addonUsers[mk]
+    if not theirVersion then return false end
+    return _VersionKey(theirVersion) >= _VersionKey(self.MIN_COMPAT_VERSION)
+end
 
 -- ── Lifecycle ─────────────────────────────────────────────────────────────────
 
@@ -590,6 +633,17 @@ function GM:OnCommReceived(prefix, message, channel, sender)
     elseif cmd == "PONG" then
         local _, who = message:match("^(%w+)|(.+)$")
         self:Print("|cff5fba47[comm]|r PONG received from " .. tostring(who or sender))
+        return
+    end
+
+    -- Version gate: HELLO is always allowed (so we can learn the sender's
+    -- version). Every other message requires the sender's tracked version
+    -- to be >= MIN_COMPAT_VERSION. Without this, an outdated client on a
+    -- guildie's alt can flood our DB with stale-format messages.
+    if cmd ~= "HELLO" and not self:IsSenderCompatible(sender) then
+        if self._commDebug then
+            self:Print("|cffcc3333[comm]|r dropped " .. tostring(cmd) .. " from outdated/unknown sender " .. tostring(sender))
+        end
         return
     end
 
