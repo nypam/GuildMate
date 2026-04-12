@@ -164,9 +164,16 @@ function DebugView:Render()
     StatText(8,  -6,  "|cffaaaaaaSent:|r  " .. cs.sent .. " messages  (" .. FormatBytes(cs.bytesSent) .. ")")
     StatText(8,  -22, "|cffaaaaaaReceived:|r  " .. cs.received .. " messages  (" .. FormatBytes(cs.bytesReceived) .. ")")
 
-    -- ── Action buttons ──────────────────────────────────────────────────────
+    -- ── Action buttons (only visible in debug officer mode) ────────────────
+    if not GM.debugOfficer then
+        L:AddSpacer(14)
+        L:AddText("|cffaaaaaaDestructive actions are hidden. Enable them with |cffffd700/gm debug|r|cffaaaaaa.|r", 11)
+        L:Finish()
+        return
+    end
+
     L:AddSpacer(14)
-    L:AddText("|cffccccccACTIONS|r", 12, GameFontHighlight)
+    L:AddText("|cffccccccACTIONS|r  |cffff4444(destructive — /gm debug ON)|r", 12, GameFontHighlight)
     L:AddSpacer(4)
 
     local actionRow = L:AddRow(30)

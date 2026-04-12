@@ -4,6 +4,40 @@ All notable changes to GuildMate will be documented in this file.
 
 ## [Unreleased]
 
+## [v0.4.1] - 2026-04-12
+
+### Added
+- **Event-based donation tracking** — individual deposit events with timestamps stored in `donationLog`
+- Count-based reconciliation between bank log and DB (handles same-amount deposits correctly)
+- `/gm rescan` and Debug "Rescan Bank" button — re-read bank log and rebuild recent events
+- `/gm backup`, `/gm backups`, `/gm restore` — donation history snapshot system (5 rolling slots)
+- Auto-backup donations before schema migrations and Reset All
+- Debug "Actions" section now hidden unless `/gm debug` is ON (prevents accidental destructive ops)
+- French profession name canonicalization (Joaillerie → Jewelcrafting, Alchimie → Alchemy, etc.)
+- `DONATION_BATCH` message replaces N individual `DONATION_TOTAL` (100x reduction)
+- `DEPOSIT` and `DEPOSIT_BATCH` messages for rich event sync with timestamps
+- `/gm commtest` PING/PONG for comm verification
+- Data pruning on roster refresh (addonUsers, profession crafters — never donations)
+- CSV export rewritten: one row per deposit with Date/Time/Player/Realm/Rank/Amount/Period/EventId
+
+### Changed
+- Donation history is now sacred — **never** deleted by purge, reset, or roster changes
+- Backup retention expanded to 5 rolling snapshots
+- Reset All now preserves donation backups across wipe
+- Reagent encoding uses backslash escapes (fixes corruption of names with hyphens)
+- Comm regex uses `[%w_]+` instead of `%w+` (fixes silent failure of underscore commands)
+- Comm field parsers use `[^|]+` instead of greedy `(.+)` (fixes misparsing)
+- Simplified donation records to plain numbers (removed dead `{own, synced}` pattern)
+
+### Fixed
+- **Critical**: `PROF_UPDATE`, `RECIPE_UPDATE`, `DONATION_TOTAL`, `GOAL_UPDATE` silently failing because Lua `%w` doesn't match underscore
+- Duplicate donation events caused by WoW's fuzzy "X hours ago" timestamps drifting
+- Professions not syncing for non-English clients
+- Goal not propagating to new members (HELLO now triggers goal broadcast)
+- Recipes not syncing to players without the profession
+- Recipe icons showing question marks (GetRecipeList wasn't exposing icon/itemLink)
+- French locale format string mismatch causing Lua error on officer view
+
 ## [v0.4.0] - 2026-04-11
 
 ### Added
