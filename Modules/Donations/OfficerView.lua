@@ -715,25 +715,61 @@ function OfficerView:_RenderMemberRow(L, parent, row)
         return fs
     end
 
-    -- Addon indicator (green square = has GuildMate, red = doesn't)
+    -- Addon indicator (green = compatible version, amber = outdated, red = no addon)
     local addonUsers = GM.Donations:GetAddonUsers()
-    local hasAddon = addonUsers[row.key]
-    local addonSquare = rowFrame:CreateTexture(nil, "OVERLAY")
-    addonSquare:SetSize(8, 8)
-    addonSquare:SetPoint("LEFT", rowFrame, "LEFT", 8, 0)
-    addonSquare:SetTexture("Interface\\Buttons\\WHITE8X8")
-    if hasAddon then
-        addonSquare:SetVertexColor(0.2, 0.8, 0.2, 1)   -- green
-    else
-        addonSquare:SetVertexColor(0.7, 0.15, 0.15, 1)  -- red
+    local theirVersion = addonUsers[row.key]
+    local minVer = GM.MIN_COMPAT_VERSION or "0.0.0"
+    local function vkey(v)
+        if GM._VersionKey then return GM._VersionKey(v) end
+        return 0
     end
+
+    local addonHit = CreateFrame("Frame", nil, rowFrame)
+    addonHit:SetSize(12, 12)
+    addonHit:SetPoint("LEFT", rowFrame, "LEFT", 6, 0)
+    addonHit:EnableMouse(true)
+
+    local addonSquare = addonHit:CreateTexture(nil, "OVERLAY")
+    addonSquare:SetSize(8, 8)
+    addonSquare:SetPoint("CENTER", addonHit, "CENTER", 0, 0)
+    addonSquare:SetTexture("Interface\\Buttons\\WHITE8X8")
+
+    local statusLabel
+    if not theirVersion then
+        addonSquare:SetVertexColor(0.7, 0.15, 0.15, 1)     -- red: no addon
+        statusLabel = "No addon"
+    elseif vkey(theirVersion) < vkey(minVer) then
+        addonSquare:SetVertexColor(0.95, 0.75, 0.10, 1)    -- amber: outdated
+        statusLabel = "|cffffaa00Outdated|r (v" .. theirVersion .. ")\nMinimum: v" .. minVer
+    else
+        addonSquare:SetVertexColor(0.2, 0.8, 0.2, 1)       -- green: compatible
+        statusLabel = "|cff5fba47v" .. theirVersion .. "|r"
+    end
+
+    addonHit:SetScript("OnEnter", function(btn)
+        GameTooltip:SetOwner(btn, "ANCHOR_RIGHT")
+        GameTooltip:SetText("GuildMate")
+        GameTooltip:AddLine(statusLabel, 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    addonHit:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     -- Name (shifted right to make room for the square)
     local classColor = Utils.ClassColor(row.classFilename)
     local classHex = string.format("|cff%02x%02x%02x",
         classColor[1] * 255, classColor[2] * 255, classColor[3] * 255)
     local onlineStr = row.online and "" or " |cffaaaaaa(offline)|r"
-    RowText(24, 156, classHex .. Utils.Truncate(row.name, 14) .. "|r" .. onlineStr)
+
+    -- Compact version tag after the name (only when they have the addon).
+    -- Green for compatible, amber for outdated, nothing for no-addon (red
+    -- square already conveys that at a glance).
+    local versionTag = ""
+    if theirVersion then
+        local verHex = (vkey(theirVersion) < vkey(minVer)) and "ffaa00" or "5fba47"
+        versionTag = "  |cff" .. verHex .. "v" .. theirVersion .. "|r"
+    end
+
+    RowText(24, 156, classHex .. Utils.Truncate(row.name, 14) .. "|r" .. versionTag .. onlineStr)
 
     -- Rank
     local rankName = (GuildControlGetRankName and GuildControlGetRankName(row.rankIndex + 1))
