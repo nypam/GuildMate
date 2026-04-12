@@ -32,9 +32,16 @@ local function _VersionKey(v)
 end
 GM._VersionKey = _VersionKey
 
--- Returns true if the given sender's tracked version is >= MIN_COMPAT_VERSION,
--- or if the sender is the local player. Unknown senders (no HELLO yet) are
--- rejected — they must HELLO first so we can see their version.
+-- Returns true if we should accept a data message from the given sender.
+-- Policy:
+--   - Self: always accepted.
+--   - Known sender (we've seen their HELLO): accept iff their version is
+--     >= MIN_COMPAT_VERSION.
+--   - Unknown sender: ACCEPT. We can't tell yet whether they're outdated or
+--     just haven't HELLO'd us. Rejecting by default was too aggressive —
+--     after a DB flush, addonUsers is empty and we'd drop everything until
+--     a handshake round-tripped. Current wire formats are backward-compatible
+--     so accepting from unknown senders is safe.
 function GM:IsSenderCompatible(sender)
     if not sender then return false end
 
@@ -44,9 +51,8 @@ function GM:IsSenderCompatible(sender)
     if rawSender == me then return true end
 
     local addonUsers = self.DB and self.DB.sv and self.DB.sv.addonUsers
-    if not addonUsers then return false end
+    if not addonUsers then return true end  -- no tracking yet, be permissive
 
-    -- sender may arrive as "Name" or "Name-Realm"; addonUsers is keyed by MemberKey
     local realm = GetRealmName and GetRealmName() or "Unknown"
     local sn, sr = sender:match("^(.+)-(.+)$")
     sn = sn or sender
@@ -54,8 +60,28 @@ function GM:IsSenderCompatible(sender)
     local mk = self.Utils.MemberKey(sn, sr)
 
     local theirVersion = addonUsers[mk]
-    if not theirVersion then return false end
+    if not theirVersion then
+        -- Unknown sender: accept, but trigger a HELLO back so we learn
+        -- their version on the next round-trip. Debounced via the existing
+        -- bidirectional-handshake logic.
+        self:_OpportunisticHello()
+        return true
+    end
     return _VersionKey(theirVersion) >= _VersionKey(self.MIN_COMPAT_VERSION)
+end
+
+-- Send our HELLO to the guild so unknown senders learn who we are. Debounced
+-- to 10s to avoid spamming if multiple unknown senders hit us back-to-back
+-- (which is common right after a DB flush).
+function GM:_OpportunisticHello()
+    local lastSent = self._lastHelloSentAt or 0
+    local now = GetTime()
+    if (now - lastSent) < 10 then return end
+    self._lastHelloSentAt = now
+    C_Timer.After(1, function()
+        GM:SendCommMessage("GuildMate",
+            "HELLO|" .. (GM.version or "0.0.0"), "GUILD")
+    end)
 end
 
 -- ── Lifecycle ─────────────────────────────────────────────────────────────────
