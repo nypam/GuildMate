@@ -673,6 +673,45 @@ function GM:OnCommReceived(prefix, message, channel, sender)
         return
     end
 
+    -- Per-sender rate limit: cap how many messages of each command type we
+    -- accept from a single sender in a sliding window. Runaway old clients
+    -- (e.g. ones that spam DONATION_TOTAL every second) still get rejected
+    -- even if their version technically passes the gate.
+    --
+    -- Caps chosen generously enough not to affect normal operation:
+    --   DONATION_TOTAL / DONATION_BATCH / DEPOSIT / DEPOSIT_BATCH: 6 / 60s
+    --   RECIPE_UPDATE / PROF_UPDATE: 3 / 60s
+    --   GOAL / GOAL_UPDATE: 4 / 60s
+    --   Everything else: no per-sender cap
+    if cmd and sender then
+        local now = GetTime()
+        self._rateLimits = self._rateLimits or {}
+        local caps = {
+            DONATION_TOTAL = 6, DONATION_BATCH = 6,
+            DEPOSIT = 20, DEPOSIT_BATCH = 4,
+            RECIPE_UPDATE = 3, PROF_UPDATE = 3,
+            GOAL = 4, GOAL_UPDATE = 4,
+        }
+        local cap = caps[cmd]
+        if cap then
+            local bucketKey = sender .. ":" .. cmd
+            local bucket = self._rateLimits[bucketKey]
+            if not bucket or (now - bucket.start) > 60 then
+                bucket = { start = now, count = 0 }
+                self._rateLimits[bucketKey] = bucket
+            end
+            bucket.count = bucket.count + 1
+            if bucket.count > cap then
+                if self._commDebug then
+                    self:Print(string.format(
+                        "|cffcc3333[comm]|r rate-limited %s from %s (%d > %d/60s)",
+                        cmd, tostring(sender), bucket.count, cap))
+                end
+                return
+            end
+        end
+    end
+
     if GM.Donations and GM.Donations.OnCommReceived then
         GM.Donations:OnCommReceived(message, channel, sender)
     end
