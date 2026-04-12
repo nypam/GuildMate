@@ -81,6 +81,10 @@ end
 -- Older events are preserved. Backs up to donationBackups first.
 -- Requires the guild bank to be open.
 function Donations:RescanRecent(days)
+    if GM.DB._readOnly then
+        if GM.Print then GM:Print("|cffcc3333GuildMate:|r read-only mode, rescan skipped.") end
+        return
+    end
     days = days or 3
     local cutoff = time() - (days * 86400)
 
@@ -202,6 +206,7 @@ end
 -- ── Transaction log parsing ───────────────────────────────────────────────────
 
 function Donations:ProcessTransactionLog()
+    if GM.DB._readOnly then return end
     -- TBC Anniversary API: GetGuildBankMoneyTransaction(index) for money log.
     -- (GetGuildBankTransactionInfo does not exist in this build.)
     local getMoneyTx = _G["GetGuildBankMoneyTransaction"]
@@ -382,6 +387,9 @@ function Donations:OnCommReceived(message, _channel, sender)
 
     -- Note: version gating is centralized in GM:OnCommReceived. By the time
     -- we get here, either this is HELLO or the sender is compatible.
+    -- Read-only mode: we still process HELLO (to learn versions) but skip
+    -- any data message that would mutate the DB.
+    if GM.DB._readOnly and cmd ~= "HELLO" then return end
 
     if cmd == "DEPOSIT" then
         -- DEPOSIT|memberKey|timestamp|amount|periodKey|eventId

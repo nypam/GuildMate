@@ -61,6 +61,47 @@ function DB:Init()
     self:_Migrate(GuildMateDB)
     self.sv = GuildMateDB
 
+    -- ── Schema write lock ──────────────────────────────────────────────────
+    -- Stamp MIN_COMPAT_VERSION into the DB. If an older client loads a DB
+    -- where writeLock > their own version, they enter read-only mode and
+    -- skip all data mutations. This prevents downgrades from corrupting
+    -- forward-incompatible schema (e.g. recipe categories, event log).
+    self.sv.writeLock = self.sv.writeLock or {}
+    local myVer  = (GM and GM.version) or "0.0.0"
+    local minVer = (GM and GM.MIN_COMPAT_VERSION) or "0.0.0"
+    local function vkey(v)
+        if GM and GM._VersionKey then return GM._VersionKey(v) end
+        return 0
+    end
+
+    if vkey(myVer) >= vkey(minVer) then
+        -- We're on a sufficiently-new client. Bump the lock forward.
+        local locked = self.sv.writeLock.version or "0.0.0"
+        if vkey(minVer) > vkey(locked) then
+            self.sv.writeLock.version    = minVer
+            self.sv.writeLock.lockedBy   = UnitName("player") or "?"
+            self.sv.writeLock.lockedAt   = time()
+        end
+        self._readOnly = false
+    else
+        -- We're on an older client. If the lock is above our version, we
+        -- can't safely mutate the DB. Mark read-only.
+        local locked = self.sv.writeLock.version or "0.0.0"
+        if vkey(locked) > vkey(myVer) then
+            self._readOnly = true
+            C_Timer.After(3, function()
+                if GM and GM.Print then
+                    GM:Print("|cffcc3333GuildMate:|r this SavedVariables file " ..
+                        "was written by a newer version (v" .. locked .. "). " ..
+                        "Running in |cffff4444READ-ONLY|r mode until you update " ..
+                        "to v" .. locked .. " or later.")
+                end
+            end)
+        else
+            self._readOnly = false
+        end
+    end
+
     -- Heal any double-counting introduced by the old SetDonationTotal code.
     -- Two stages:
     --   1. Remove synthetic log entries that duplicate real events.
@@ -564,6 +605,7 @@ function DB:NextGoalId()
 end
 
 function DB:SaveGoal(goal)
+    if self._readOnly then return end
     self.sv.goals[goal.id] = goal
 end
 
@@ -575,6 +617,7 @@ function DB:GetActiveGoal()
 end
 
 function DB:DeactivateAllGoals()
+    if self._readOnly then return end
     for _, goal in pairs(self.sv.goals) do
         goal.active = false
     end
@@ -607,6 +650,7 @@ end
 
 -- Update a member's rank index (called on roster refresh)
 function DB:SetMemberRank(memberKey, rankIndex)
+    if self._readOnly then return end
     local rec = self:GetMemberRecord(memberKey)
     rec.rankIndex = rankIndex
 end
@@ -618,6 +662,7 @@ end
 -- recomputed by summing all events for that member+period, so we stay
 -- consistent even if some events were imported from pre-log aggregates.
 function DB:AddDonationEvent(event)
+    if self._readOnly then return false end
     if not event or not event.id then return false end
 
     self.sv.donationLogSeen = self.sv.donationLogSeen or {}
@@ -705,6 +750,7 @@ end
 -- here — aggregate totals live in rec.records[periodKey], and real event
 -- detail is added exclusively via AddDonationEvent().
 function DB:SetDonationTotal(memberKey, periodKey, newTotal)
+    if self._readOnly then return end
     if not memberKey or not periodKey or type(newTotal) ~= "number" then return end
 
     local rec = self:GetMemberRecord(memberKey)

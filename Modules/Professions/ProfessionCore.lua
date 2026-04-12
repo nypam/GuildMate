@@ -325,6 +325,7 @@ function Professions:ScanRecipes()
 end
 
 function Professions:_DoScanRecipes()
+    if GM.DB._readOnly then return end
     -- Only works when tradeskill window is open
     local getNumTS = _G["GetNumTradeSkills"]
     local getTSInfo = _G["GetTradeSkillInfo"]
@@ -610,6 +611,7 @@ function Professions:ScanCraftRecipes()
 end
 
 function Professions:_DoScanCraftRecipes()
+    if GM.DB._readOnly then return end
     local getNumCrafts = _G["GetNumCrafts"]
     local getCraftInfo = _G["GetCraftInfo"]
     local getCraftName = _G["GetCraftName"]
@@ -831,6 +833,7 @@ end
 -- ── Scanning own professions ─────────────────────────────────────────────────
 
 function Professions:ScanSelf()
+    if GM.DB._readOnly then return end
     if not GetNumSkillLines then return end
 
     local playerName = UnitName("player") or "Unknown"
@@ -914,6 +917,7 @@ end
 -- ── Comm: receive ────────────────────────────────────────────────────────────
 
 function Professions:OnCommReceived(message, _channel, sender)
+    if GM.DB._readOnly then return end
     local cmd = message:match("^([%w_]+)")
 
     if cmd == "RECIPE_UPDATE" then
