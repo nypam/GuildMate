@@ -471,7 +471,12 @@ function Donations:OnCommReceived(message, _channel, sender)
         end
 
     elseif cmd == "HELLO" then
-        -- HELLO|version  — sender has GuildMate installed
+        -- HELLO|version  — sender has GuildMate installed.
+        -- We ONLY record the version. Data broadcasts happen on real events
+        -- (bank scans, goal edits, tradeskill opens), NOT on every HELLO.
+        -- The old "welcome dump" pattern caused 5-50KB cascades per login
+        -- which saturated comm in busy guilds. Fresh clients bootstrap via
+        -- explicit /gm sync instead.
         local _, version = message:match("^(%w+)|(.+)$")
         if version and sender then
             local realm = GetRealmName and GetRealmName() or "Unknown"
@@ -496,47 +501,6 @@ function Donations:OnCommReceived(message, _channel, sender)
                     end)
                 end
             end
-
-            -- Per-sender debounce for the data dump. Without this, any flurry
-            -- of HELLOs (new member login storm, addonUsers flush, loopy old
-            -- clients that re-HELLO every few seconds) triggers a dump per
-            -- HELLO — each dump being 5+ large messages. A single sender's
-            -- dump should happen at most once per 5 minutes.
-            Donations._helloDumpSentAt = Donations._helloDumpSentAt or {}
-            local last = Donations._helloDumpSentAt[senderKey] or 0
-            local now = GetTime()
-            if (now - last) < 300 then
-                return
-            end
-            Donations._helloDumpSentAt[senderKey] = now
-
-            -- Welcome data dump — share everything we have so the new member
-            -- doesn't have to wait for a bank open or tradeskill scan.
-            C_Timer.After(2, function()
-                local goal = GM.DB:GetActiveGoal()
-                if goal and Donations.BroadcastGoal then
-                    Donations:BroadcastGoal(goal)
-                end
-                if Donations.BroadcastKnownTotals then
-                    Donations:BroadcastKnownTotals()
-                end
-                if Donations.BroadcastDonationLog then
-                    Donations:BroadcastDonationLog(60)
-                end
-                if GM.Professions then
-                    local myName = UnitName("player") or "Unknown"
-                    local myRealm = GetRealmName and GetRealmName() or "Unknown"
-                    local myKey = Utils.MemberKey(myName, myRealm)
-                    if GM.Professions.BroadcastProfessions then
-                        GM.Professions:BroadcastProfessions(myKey)
-                    end
-                    if GM.Professions.BroadcastRecipes and GM.DB.sv.recipes2 then
-                        for profName in pairs(GM.DB.sv.recipes2) do
-                            GM.Professions:BroadcastRecipes(myKey, profName)
-                        end
-                    end
-                end
-            end)
         end
 
     elseif cmd == "GOAL" or cmd == "GOAL_UPDATE" then
