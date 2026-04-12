@@ -60,6 +60,30 @@ function DB:Init()
     GuildMateDB = GuildMateDB or {}
     self:_Migrate(GuildMateDB)
     self.sv = GuildMateDB
+
+    -- Heal any double-counting introduced by the old SetDonationTotal behavior.
+    -- Backs up first so the user can always /gm restore if needed.
+    if self.sv.donationLog and #self.sv.donationLog > 0 then
+        local hasSynthetics = false
+        for _, e in ipairs(self.sv.donationLog) do
+            if e.synthetic then hasSynthetics = true; break end
+        end
+        if hasSynthetics then
+            self:BackupDonations("pre-synthetic-cleanup")
+            local removed = self:CleanupSyntheticDonations()
+            if removed > 0 then
+                -- Defer the chat print until the addon is fully initialized.
+                C_Timer.After(3, function()
+                    if GM and GM.Print then
+                        GM:Print("|cff4A90D9GuildMate:|r healed " .. removed ..
+                            " duplicate donation entr" ..
+                            (removed == 1 and "y" or "ies") ..
+                            ". Backup saved; use |cffffd700/gm restore|r to undo.")
+                    end
+                end)
+            end
+        end
+    end
 end
 
 -- Snapshot donations to a rolling backup slot.
@@ -626,8 +650,15 @@ end
 
 -- Sets a member's period total to max(current, newTotal).
 -- Safe to call multiple times — never decreases a total.
--- If there's a gap between our log-derived total and the incoming aggregate,
--- record a synthetic event to capture the difference (no timestamp available).
+--
+-- If the detailed donationLog already contains real events for this member+
+-- period, we TRUST the log and skip synthetic creation — otherwise a
+-- DONATION_BATCH arriving alongside DEPOSIT_BATCH would double-count the same
+-- deposits (once as a real event, once as a synthetic gap).
+--
+-- Synthetics are only created when no real events exist yet — i.e. when we're
+-- receiving aggregated data from an old client that doesn't broadcast the
+-- individual events.
 function DB:SetDonationTotal(memberKey, periodKey, newTotal)
     local rec = self:GetMemberRecord(memberKey)
     local current = rec.records[periodKey] or 0
@@ -635,13 +666,29 @@ function DB:SetDonationTotal(memberKey, periodKey, newTotal)
         current = math.max(current.own or 0, current.synced or 0)
     end
 
+    -- Compute the real (non-synthetic) log sum for this member+period.
+    local realLogSum = 0
+    for _, e in ipairs(self.sv.donationLog or {}) do
+        if e.memberKey == memberKey and e.periodKey == periodKey and not e.synthetic then
+            realLogSum = realLogSum + (e.amount or 0)
+        end
+    end
+
+    -- If the detailed log already accounts for (or exceeds) newTotal, the
+    -- aggregated total is redundant — don't touch the log.
+    if realLogSum >= newTotal then
+        if newTotal > current then
+            rec.records[periodKey] = math.max(current, realLogSum)
+        end
+        return
+    end
+
     if newTotal > current then
-        local gap = newTotal - current
         rec.records[periodKey] = newTotal
         rec.lastDeposit = time()
 
-        -- Record the gap as a synthetic event so we don't lose detail later
-        -- (only for gaps > 0 that likely come from old client aggregated broadcasts)
+        -- Only the portion NOT covered by real events needs a synthetic.
+        local gap = newTotal - realLogSum
         if gap > 0 then
             local syntheticId = "syn:" .. memberKey .. ":" .. periodKey .. ":" .. newTotal
             self.sv.donationLogSeen = self.sv.donationLogSeen or {}
@@ -659,4 +706,61 @@ function DB:SetDonationTotal(memberKey, periodKey, newTotal)
             end
         end
     end
+end
+
+-- Walk the donationLog and remove stale synthetic events that are fully
+-- covered by real (timestamped) events for the same member+period. This
+-- heals DBs that accumulated duplicates under the previous SetDonationTotal
+-- implementation.
+--
+-- Returns the number of synthetic entries removed.
+function DB:CleanupSyntheticDonations()
+    local log = self.sv.donationLog
+    if not log then return 0 end
+
+    -- Group events by (memberKey :: periodKey)
+    local byKey = {}
+    for i, e in ipairs(log) do
+        local key = (e.memberKey or "") .. "::" .. (e.periodKey or "")
+        byKey[key] = byKey[key] or { realSum = 0, syntheticIndices = {}, maxNewTotal = 0 }
+        local g = byKey[key]
+        if e.synthetic then
+            g.syntheticIndices[#g.syntheticIndices + 1] = i
+            -- Parse the newTotal that was encoded into the synthetic id.
+            local nt = tonumber(e.id and e.id:match(":(%d+)$") or nil)
+            if nt and nt > g.maxNewTotal then g.maxNewTotal = nt end
+        else
+            g.realSum = g.realSum + (e.amount or 0)
+        end
+    end
+
+    -- Collect indices of synthetics to remove (real events now cover them).
+    local toRemove = {}
+    for _, g in pairs(byKey) do
+        if g.realSum >= g.maxNewTotal and #g.syntheticIndices > 0 then
+            for _, idx in ipairs(g.syntheticIndices) do
+                toRemove[#toRemove + 1] = idx
+            end
+        end
+    end
+
+    -- Remove in descending order so earlier indices stay valid.
+    table.sort(toRemove, function(a, b) return a > b end)
+    for _, idx in ipairs(toRemove) do
+        local e = log[idx]
+        table.remove(log, idx)
+        if e and e.id and self.sv.donationLogSeen then
+            self.sv.donationLogSeen[e.id] = nil
+        end
+    end
+
+    -- Recompute all affected period totals so rec.records matches the log.
+    for key, _ in pairs(byKey) do
+        local mk, pk = key:match("^(.-)::(.+)$")
+        if mk and pk then
+            self:_RecomputePeriodTotal(mk, pk)
+        end
+    end
+
+    return #toRemove
 end
