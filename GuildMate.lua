@@ -10,7 +10,7 @@ local GM = LibStub("AceAddon-3.0"):NewAddon("GuildMate",
 
 do
     local v = (GetAddOnMetadata or C_AddOns and C_AddOns.GetAddOnMetadata or function() end)("GuildMate", "Version")
-    if not v or v:find("project%-version") then v = "0.4.1-dev" end
+    if not v or v:find("project%-version") then v = "0.4.2-dev" end
     GM.version = v
 end
 GM.L = LibStub("AceLocale-3.0"):GetLocale("GuildMate")
