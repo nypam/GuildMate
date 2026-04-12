@@ -4,6 +4,20 @@ All notable changes to GuildMate will be documented in this file.
 
 ## [Unreleased]
 
+## [v0.4.3] - 2026-04-12
+
+### Added
+- Debug live comm feed — last 50 incoming/outgoing messages with direction badge, command, sender, bytes, and tooltip showing full payload
+- Per-table "Last Update" column in Debug DB inspector (Xs/Xm/Xh ago)
+- Refresh button on Debug Comm Stats
+- `GOAL_NOT_APPLICABLE` locale string (enUS + frFR)
+
+### Changed
+- Member view now hides the donation goal card for players whose rank is not in the goal's target ranks (shows "The current donation goal does not apply to your rank." instead)
+- Debug view no longer shows the "Destructive actions are hidden" hint text when `/gm debug` is OFF — the section simply collapses
+- Live comm feed direction cell uses a colored square badge with a white triangle (▼ green for incoming, ▲ orange for outgoing) rendered via `ChatFrameExpandArrow` texture rotated with `SetTexCoord`
+- Live comm feed columns are left-aligned with spacing between the direction label and the Command column
+
 ## [v0.4.1] - 2026-04-12
 
 ### Added

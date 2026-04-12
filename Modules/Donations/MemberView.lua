@@ -20,6 +20,17 @@ function MemberView:Render()
     local memberKey  = Utils.MemberKey(playerName, realm)
 
     local goal      = GM.DB:GetActiveGoal()
+
+    -- Hide goal if it doesn't apply to the player's rank
+    local goalApplies = true
+    if goal then
+        local _, _, playerRankIndex = GetGuildInfo("player")
+        if playerRankIndex and goal.targetRanks and not goal.targetRanks[playerRankIndex] then
+            goalApplies = false
+        end
+    end
+    if not goalApplies then goal = nil end
+
     local periodKey = goal and Utils.PeriodKey(time(), goal.period) or nil
     local donated   = (goal and periodKey) and GM.DB:GetDonated(memberKey, periodKey) or 0
     local rawFrac   = (goal and goal.goldAmount > 0) and (donated / goal.goldAmount) or 0
@@ -179,7 +190,8 @@ function MemberView:Render()
         Utils.SetFrameColor(noGoalRow, 0.15, 0.15, 0.15, 0.3)
         local fs = noGoalRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         fs:SetPoint("LEFT", noGoalRow, "LEFT", 10, 0)
-        fs:SetText("|cffaaaaaa" .. GM.L["NO_GOAL_SET"] .. "|r")
+        local msg = goalApplies and GM.L["NO_GOAL_SET"] or GM.L["GOAL_NOT_APPLICABLE"]
+        fs:SetText("|cffaaaaaa" .. msg .. "|r")
     end
 
     -- ── History ──────────────────────────────────────────────────────────────

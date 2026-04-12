@@ -95,15 +95,58 @@ end
 -- Init comm stats early (before any SendCommMessage call)
 GM._commStats = { sent = 0, received = 0, bytesSent = 0, bytesReceived = 0 }
 
+-- Rolling buffer of recent comm events for the Debug view
+GM._commHistory = {}   -- { { dir, cmd, sender, bytes, timestamp, preview }, ... }
+GM._commHistoryMax = 50
+
+-- Last-update timestamps per DB table (when data last changed via comm)
+GM._lastUpdates = {}   -- { [tableName] = timestamp }
+
+local function _RecordCommEvent(dir, message, sender)
+    local cmd = message and message:match("^([%w_]+)") or "?"
+    local preview = message or ""
+    if #preview > 120 then preview = preview:sub(1, 117) .. "..." end
+
+    table.insert(GM._commHistory, 1, {
+        dir       = dir,
+        cmd       = cmd,
+        sender    = sender or "?",
+        bytes     = message and #message or 0,
+        timestamp = time(),
+        preview   = preview,
+    })
+    while #GM._commHistory > GM._commHistoryMax do
+        table.remove(GM._commHistory)
+    end
+
+    -- Track last update for the table this command affects
+    if cmd == "DONATION_BATCH" or cmd == "DONATION_TOTAL"
+       or cmd == "DEPOSIT" or cmd == "DEPOSIT_BATCH" then
+        GM._lastUpdates.donations = time()
+    elseif cmd == "PROF_UPDATE" then
+        GM._lastUpdates.professions = time()
+    elseif cmd == "RECIPE_UPDATE" then
+        GM._lastUpdates.recipes2 = time()
+    elseif cmd == "GOAL" or cmd == "GOAL_UPDATE" then
+        GM._lastUpdates.goals = time()
+    elseif cmd == "HELLO" then
+        GM._lastUpdates.addonUsers = time()
+    end
+end
+GM._RecordCommEvent = _RecordCommEvent
+
 function GM:OnEnable()
     self.Events:Register()
 
-    -- Wrap SendCommMessage to track outgoing comm stats
+    -- Wrap SendCommMessage to track outgoing comm stats + history
     local origSend = self.SendCommMessage
     self.SendCommMessage = function(self, prefix, message, ...)
         if prefix == "GuildMate" and self._commStats then
             self._commStats.sent = self._commStats.sent + 1
             self._commStats.bytesSent = self._commStats.bytesSent + #message
+            if GM._RecordCommEvent then
+                GM._RecordCommEvent("out", message, UnitName("player") or "?")
+            end
         end
         return origSend(self, prefix, message, ...)
     end
@@ -529,6 +572,9 @@ function GM:OnCommReceived(prefix, message, channel, sender)
     -- Track comm stats
     self._commStats.received = self._commStats.received + 1
     self._commStats.bytesReceived = self._commStats.bytesReceived + #message
+
+    -- Record in history buffer for the Debug view
+    _RecordCommEvent("in", message, sender)
 
     -- Comm debug logging
     if self._commDebug then

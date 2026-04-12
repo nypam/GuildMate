@@ -92,6 +92,7 @@ L["DONATED_REMAINING"]    = "%s donn\195\169  \194\183  |cffd9a400%s restant|r  
 L["LAST_DEPOSIT"]         = "Dernier d\195\169p\195\180t :  %s"
 L["AUTO_TRACK_HINT"]      = "Vos d\195\169p\195\180ts \195\160 la banque de guilde sont suivis automatiquement."
 L["NO_GOAL_SET"]          = "Aucun objectif n'a \195\169t\195\169 d\195\169fini par un officier."
+L["GOAL_NOT_APPLICABLE"]  = "L'objectif de donation actuel ne s'applique pas \195\160 votre rang."
 L["HISTORY"]              = "HISTORIQUE"
 L["NO_HISTORY"]           = "Pas encore d'historique."
 

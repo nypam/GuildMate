@@ -85,6 +85,7 @@ function DebugView:Render()
     Header(0, 160, "Table")
     Header(170, 60, "Rows")
     Header(240, 80, "Est. Size")
+    Header(410, 140, "Last Update")
 
     L:AddSpacer(4)
 
@@ -141,6 +142,24 @@ function DebugView:Render()
             _browseSearch = ""
             DebugView:Render()
         end)
+
+        -- Last update
+        local updateFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        updateFs:SetPoint("LEFT", row, "LEFT", 410, 0)
+        updateFs:SetWidth(160)
+        updateFs:SetJustifyH("LEFT")
+        local lastTs = GM._lastUpdates and GM._lastUpdates[def.key]
+        if lastTs then
+            local ago = time() - lastTs
+            local agoStr
+            if ago < 60 then agoStr = ago .. "s ago"
+            elseif ago < 3600 then agoStr = math.floor(ago / 60) .. "m ago"
+            elseif ago < 86400 then agoStr = math.floor(ago / 3600) .. "h ago"
+            else agoStr = math.floor(ago / 86400) .. "d ago" end
+            updateFs:SetText("|cff5fba47" .. agoStr .. "|r  |cffaaaaaa" .. date("%H:%M:%S", lastTs) .. "|r")
+        else
+            updateFs:SetText("|cff666666—|r")
+        end
     end
 
     -- Total
@@ -164,10 +183,143 @@ function DebugView:Render()
     StatText(8,  -6,  "|cffaaaaaaSent:|r  " .. cs.sent .. " messages  (" .. FormatBytes(cs.bytesSent) .. ")")
     StatText(8,  -22, "|cffaaaaaaReceived:|r  " .. cs.received .. " messages  (" .. FormatBytes(cs.bytesReceived) .. ")")
 
+    -- Refresh button (updates timestamps + feed)
+    local refreshBtn = CreateFrame("Button", nil, statsRow, "UIPanelButtonTemplate")
+    refreshBtn:SetSize(80, 20)
+    refreshBtn:SetPoint("TOPRIGHT", statsRow, "TOPRIGHT", -6, -6)
+    refreshBtn:SetText("Refresh")
+    refreshBtn:SetScript("OnClick", function()
+        PlaySound(856)
+        DebugView:Render()
+    end)
+
+    -- ── Live comm feed ──────────────────────────────────────────────────────
+    L:AddSpacer(14)
+    L:AddText("|cffccccccLIVE COMM FEED|r  |cffaaaaaa(last " .. (GM._commHistoryMax or 50) .. " messages)|r", 12, GameFontHighlight)
+    L:AddSpacer(4)
+
+    local history = GM._commHistory or {}
+    if #history == 0 then
+        L:AddText("|cffaaaaaaNo messages yet. Waiting for comm activity...|r", 11)
+    else
+        -- Column headers
+        local feedHeader = L:AddFrame(16)
+        local function FeedHeader(x, w, text)
+            local fs = feedHeader:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            fs:SetPoint("LEFT", feedHeader, "LEFT", x, 0)
+            fs:SetWidth(w)
+            fs:SetJustifyH("LEFT")
+            fs:SetText("|cff666666" .. text .. "|r")
+        end
+        FeedHeader(4,   50, "Time")
+        FeedHeader(60,  40, "Dir")
+        FeedHeader(110, 120, "Command")
+        FeedHeader(235, 120, "Sender")
+        FeedHeader(360,  60, "Bytes")
+
+        for i, evt in ipairs(history) do
+            if i > 50 then break end
+
+            local row = L:AddFrame(18)
+            row:EnableMouse(true)
+
+            local bg = row:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints()
+            bg:SetTexture("Interface\\Buttons\\WHITE8X8")
+            bg:SetVertexColor(0.10, 0.10, 0.10, i % 2 == 0 and 0.15 or 0.25)
+
+            local evtPreview = evt.preview or ""
+            row:SetScript("OnEnter", function()
+                bg:SetVertexColor(0.18, 0.22, 0.30, 0.5)
+                GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
+                GameTooltip:ClearLines()
+                GameTooltip:AddLine(evt.cmd, 1, 1, 1)
+                GameTooltip:AddLine(date("%Y-%m-%d %H:%M:%S", evt.timestamp), 0.7, 0.7, 0.7)
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine(evtPreview, 0.8, 0.8, 1, true)
+                GameTooltip:Show()
+            end)
+            row:SetScript("OnLeave", function()
+                bg:SetVertexColor(0.10, 0.10, 0.10, i % 2 == 0 and 0.15 or 0.25)
+                GameTooltip:Hide()
+            end)
+
+            -- Time
+            local timeFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            timeFs:SetPoint("LEFT", row, "LEFT", 4, 0)
+            timeFs:SetWidth(50)
+            timeFs:SetJustifyH("LEFT")
+            timeFs:SetText("|cffaaaaaa" .. date("%H:%M:%S", evt.timestamp) .. "|r")
+
+            -- Direction (colored square badge + label, vertically centered)
+            local isIn = (evt.dir == "in")
+            local badgeR, badgeG, badgeB = 0.37, 0.73, 0.28  -- green for in
+            local labelColor = "|cff5fba47"
+            local labelText = "in"
+            -- ChatFrameExpandArrow is a plain white right-pointing triangle.
+            -- Rotate it 90° CW (down ▼) for "in", 90° CCW (up ▲) for "out".
+            local coordUL1, coordUL2 = 1, 0
+            local coordLL1, coordLL2 = 0, 0
+            local coordUR1, coordUR2 = 1, 1
+            local coordLR1, coordLR2 = 0, 1
+            if not isIn then
+                badgeR, badgeG, badgeB = 0.85, 0.64, 0.00     -- orange for out
+                labelColor = "|cffd9a400"
+                labelText = "out"
+                -- 90° CCW: up arrow
+                coordUL1, coordUL2 = 0, 1
+                coordLL1, coordLL2 = 1, 1
+                coordUR1, coordUR2 = 0, 0
+                coordLR1, coordLR2 = 1, 0
+            end
+
+            local badge = CreateFrame("Frame", nil, row)
+            badge:SetSize(14, 14)
+            badge:SetPoint("LEFT", row, "LEFT", 60, 0)
+
+            local badgeBg = badge:CreateTexture(nil, "BACKGROUND")
+            badgeBg:SetAllPoints()
+            badgeBg:SetTexture("Interface\\Buttons\\WHITE8X8")
+            badgeBg:SetVertexColor(badgeR, badgeG, badgeB, 0.85)
+
+            local arrow = badge:CreateTexture(nil, "OVERLAY")
+            arrow:SetSize(8, 8)
+            arrow:SetPoint("CENTER", badge, "CENTER", 0, 0)
+            arrow:SetTexture("Interface\\ChatFrame\\ChatFrameExpandArrow")
+            arrow:SetTexCoord(coordUL1, coordUL2, coordLL1, coordLL2,
+                              coordUR1, coordUR2, coordLR1, coordLR2)
+            arrow:SetVertexColor(1, 1, 1, 1)
+
+            local dirFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            dirFs:SetPoint("LEFT", badge, "RIGHT", 4, 0)
+            dirFs:SetText(labelColor .. labelText .. "|r")
+
+            -- Command
+            local cmdFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            cmdFs:SetPoint("LEFT", row, "LEFT", 110, 0)
+            cmdFs:SetWidth(120)
+            cmdFs:SetJustifyH("LEFT")
+            cmdFs:SetText("|cffffffff" .. evt.cmd .. "|r")
+
+            -- Sender
+            local senderFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            senderFs:SetPoint("LEFT", row, "LEFT", 235, 0)
+            senderFs:SetWidth(120)
+            senderFs:SetJustifyH("LEFT")
+            local senderName = evt.sender:match("^(.+)-[^-]+$") or evt.sender
+            senderFs:SetText("|cffaaaaaa" .. senderName .. "|r")
+
+            -- Bytes
+            local bytesFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            bytesFs:SetPoint("LEFT", row, "LEFT", 360, 0)
+            bytesFs:SetWidth(60)
+            bytesFs:SetJustifyH("LEFT")
+            bytesFs:SetText("|cff888888" .. evt.bytes .. "B|r")
+        end
+    end
+
     -- ── Action buttons (only visible in debug officer mode) ────────────────
     if not GM.debugOfficer then
-        L:AddSpacer(14)
-        L:AddText("|cffaaaaaaDestructive actions are hidden. Enable them with |cffffd700/gm debug|r|cffaaaaaa.|r", 11)
         L:Finish()
         return
     end
