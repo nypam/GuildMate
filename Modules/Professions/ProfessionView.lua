@@ -482,7 +482,34 @@ function ProfessionView:_RenderRecipes(L, parent, professionName)
     -- Roster lookup for display names
     local rosterLookup = GM.Donations and GM.Donations:GetRoster() or {}
 
+    local lastCategory = nil
     for _, recipe in ipairs(filtered) do
+        -- Category header (only emit when the category changes)
+        if recipe.category and recipe.category ~= lastCategory then
+            lastCategory = recipe.category
+            L:AddSpacer(6)
+            local catRow = L:AddFrame(18)
+            local catFs = catRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            catFs:SetPoint("LEFT", catRow, "LEFT", 4, 0)
+            catFs:SetText("|cffd4af37" .. recipe.category .. "|r")
+
+            -- Subtle underline
+            local underline = catRow:CreateTexture(nil, "BORDER")
+            underline:SetHeight(1)
+            underline:SetPoint("BOTTOMLEFT", catRow, "BOTTOMLEFT", 0, 2)
+            underline:SetPoint("BOTTOMRIGHT", catRow, "BOTTOMRIGHT", 0, 2)
+            underline:SetTexture("Interface\\Buttons\\WHITE8X8")
+            underline:SetVertexColor(0.5, 0.4, 0.15, 0.3)
+        elseif not recipe.category and lastCategory ~= "__uncategorized__" then
+            -- Only emit "Other" header once, at the transition to uncategorized recipes
+            lastCategory = "__uncategorized__"
+            L:AddSpacer(6)
+            local catRow = L:AddFrame(18)
+            local catFs = catRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            catFs:SetPoint("LEFT", catRow, "LEFT", 4, 0)
+            catFs:SetText("|cff888888Other|r")
+        end
+
         local hasCrafter = recipe.hasCrafter
         local isSelected = (_selectedRecipe == recipe.spellID)
 

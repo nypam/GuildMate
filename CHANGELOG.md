@@ -4,6 +4,16 @@ All notable changes to GuildMate will be documented in this file.
 
 ## [Unreleased]
 
+## [v0.4.4] - 2026-04-12
+
+### Added
+- **Enchanting recipe scanning** — uses the separate Craft API (`GetNumCrafts`, `GetCraftInfo`, `CraftFrame`, `CRAFT_SHOW`/`CRAFT_UPDATE`). TBC quirk: enchanting predates the TradeSkill system and was silently invisible to the scanner.
+- Recipe categories — scanner captures in-game category headers (e.g. "Potion", "Elixir", "Helm") and their positional order; recipe list displays grouped headers matching the tradeskill/craft window order
+
+### Changed
+- Recipe sort order now follows the in-game window (category → position) instead of alphabetical
+- Live comm feed triangle is now pure white (`SetDesaturated(true)` strips the yellow tint baked into `ChatFrameExpandArrow`)
+
 ## [v0.4.3] - 2026-04-12
 
 ### Added

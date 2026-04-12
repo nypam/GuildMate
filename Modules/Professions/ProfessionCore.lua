@@ -230,19 +230,28 @@ function Professions:GetRecipeList(professionName)
         local icon = data.icon or spellIcon
 
         result[#result + 1] = {
-            spellID    = spellID,
-            name       = name,
-            icon       = icon,
-            itemLink   = data.itemLink,
-            crafters   = data.crafters or {},
-            reagents   = data.reagents or {},
-            hasCrafter = data.crafters and #data.crafters > 0,
+            spellID       = spellID,
+            name          = name,
+            icon          = icon,
+            itemLink      = data.itemLink,
+            crafters      = data.crafters or {},
+            reagents      = data.reagents or {},
+            hasCrafter    = data.crafters and #data.crafters > 0,
+            category      = data.category,
+            categoryOrder = data.categoryOrder or 9999,
+            recipeOrder   = data.recipeOrder or 9999,
         }
     end
 
-    -- Sort: recipes with crafters first (green), then alphabetical
+    -- Sort: follow in-game order (category, then position within category).
+    -- Recipes without category info sink to the bottom, sorted alphabetically.
     table.sort(result, function(a, b)
-        if a.hasCrafter ~= b.hasCrafter then return a.hasCrafter end
+        if a.categoryOrder ~= b.categoryOrder then
+            return a.categoryOrder < b.categoryOrder
+        end
+        if a.recipeOrder ~= b.recipeOrder then
+            return a.recipeOrder < b.recipeOrder
+        end
         return a.name < b.name
     end)
 
@@ -305,10 +314,22 @@ function Professions:ScanRecipes()
     if not db[profName] then db[profName] = {} end
 
     local changed = false
+    local currentCategory = nil
+    local categoryOrder = 0
+    local recipeOrder = 0
+    local seenCategories = {}
 
     for i = 1, numSkills do
         local name, skillType = getTSInfo(i)
-        if name and skillType and skillType ~= "header" and skillType ~= "subheader" then
+        if name and skillType and (skillType == "header" or skillType == "subheader") then
+            -- Category separator — remember it for the recipes that follow
+            currentCategory = name
+            if not seenCategories[name] then
+                categoryOrder = categoryOrder + 1
+                seenCategories[name] = categoryOrder
+            end
+        elseif name and skillType then
+            recipeOrder = recipeOrder + 1
 
             -- Try to get spellID from recipe link
             local recipeLink = getTSRecipeLink and getTSRecipeLink(i)
@@ -340,6 +361,13 @@ function Professions:ScanRecipes()
 
             -- Store fallback name (localized, for display if GetSpellInfo fails)
             recipe.fallbackName = name
+
+            -- Store category + in-window position for grouped, ordered display
+            if currentCategory then
+                recipe.category = currentCategory
+                recipe.categoryOrder = seenCategories[currentCategory]
+            end
+            recipe.recipeOrder = recipeOrder
 
             -- Always refresh icon when window is open
             if getTSIcon then
@@ -377,6 +405,137 @@ function Professions:ScanRecipes()
                 if numReagents and numReagents > 0 then
                     for j = 1, numReagents do
                         local reagentName, reagentTex, reagentCount = getTSReagent(i, j)
+                        if reagentName then
+                            recipe.reagents[#recipe.reagents + 1] = {
+                                name  = reagentName,
+                                count = reagentCount or 1,
+                                icon  = reagentTex,
+                            }
+                        end
+                    end
+                    changed = true
+                end
+            end
+        end
+    end
+
+    if changed then
+        self:BroadcastRecipes(memberKey, profName)
+        GM.MainFrame:RefreshActiveView()
+    end
+end
+
+-- ── Enchanting (Craft API — different from TradeSkill in TBC) ──────────────
+-- Enchanting uses CraftFrame + GetCraft* APIs, not TradeSkill. This is a TBC
+-- quirk — enchanting was built as a "craft" before the tradeskill system existed.
+
+function Professions:ScanCraftRecipes()
+    local getNumCrafts = _G["GetNumCrafts"]
+    local getCraftInfo = _G["GetCraftInfo"]
+    local getCraftName = _G["GetCraftName"]
+    local getCraftIcon = _G["GetCraftIcon"]
+    local getCraftItemLink = _G["GetCraftItemLink"]
+    local getCraftNumReagents = _G["GetCraftNumReagents"]
+    local getCraftReagent = _G["GetCraftReagentInfo"]
+
+    if not getNumCrafts or not getCraftInfo then return end
+
+    local numCrafts = getNumCrafts()
+    if not numCrafts or numCrafts == 0 then return end
+
+    -- CraftFrame is only Enchanting in TBC (Beast Training uses it too but we
+    -- canonicalize by name so non-enchanting crafts will simply fail Canonicalize).
+    local rawName = getCraftName and getCraftName() or nil
+    local profName = rawName and Professions:Canonicalize(rawName) or nil
+    if not profName then
+        -- Fallback: if no craft name API, assume Enchanting if player has the skill
+        profName = "Enchanting"
+    end
+
+    local playerName = UnitName("player") or "Unknown"
+    local realm = GetRealmName and GetRealmName() or "Unknown"
+    local memberKey = Utils.MemberKey(playerName, realm)
+
+    local db = _EnsureRecipeDB()
+    if not db[profName] then db[profName] = {} end
+
+    local changed = false
+    local currentCategory = nil
+    local categoryOrder = 0
+    local recipeOrder = 0
+    local seenCategories = {}
+
+    for i = 1, numCrafts do
+        local name, _, craftType = getCraftInfo(i)
+        if name and craftType == "header" then
+            currentCategory = name
+            if not seenCategories[name] then
+                categoryOrder = categoryOrder + 1
+                seenCategories[name] = categoryOrder
+            end
+        elseif name and craftType then
+            recipeOrder = recipeOrder + 1
+
+            local recipeLink = getCraftItemLink and getCraftItemLink(i)
+            local spellID = _ExtractSpellID(recipeLink)
+
+            if not spellID then
+                -- Hash fallback
+                spellID = 0
+                for c = 1, #name do
+                    spellID = spellID * 31 + string.byte(name, c)
+                end
+                spellID = spellID % 1000000
+            end
+
+            local key = tostring(spellID)
+
+            if not db[profName][key] then
+                db[profName][key] = { crafters = {}, reagents = {} }
+                changed = true
+            end
+
+            local recipe = db[profName][key]
+            recipe.fallbackName = name
+
+            -- Store category + in-window position for grouped, ordered display
+            if currentCategory then
+                recipe.category = currentCategory
+                recipe.categoryOrder = seenCategories[currentCategory]
+            end
+            recipe.recipeOrder = recipeOrder
+
+            if getCraftIcon then
+                local newIcon = getCraftIcon(i)
+                if newIcon then recipe.icon = newIcon end
+            end
+
+            if recipeLink then
+                recipe.itemLink = recipeLink
+                if GetItemInfo then GetItemInfo(recipeLink) end
+            end
+
+            -- Add self as crafter
+            local alreadyCrafter = false
+            for _, ck in ipairs(recipe.crafters) do
+                if ck == memberKey then alreadyCrafter = true; break end
+            end
+            if not alreadyCrafter then
+                recipe.crafters[#recipe.crafters + 1] = memberKey
+                changed = true
+            end
+
+            -- Reagents
+            local needsRescan = #recipe.reagents == 0
+            if not needsRescan and #recipe.reagents > 0 and not recipe.reagents[1].icon then
+                recipe.reagents = {}
+                needsRescan = true
+            end
+            if needsRescan and getCraftNumReagents and getCraftReagent then
+                local numReagents = getCraftNumReagents(i)
+                if numReagents and numReagents > 0 then
+                    for j = 1, numReagents do
+                        local reagentName, reagentTex, reagentCount = getCraftReagent(i, j)
                         if reagentName then
                             recipe.reagents[#recipe.reagents + 1] = {
                                 name  = reagentName,
@@ -635,6 +794,18 @@ function Professions:RegisterEvents()
                 end)
             end
         end
+        -- Enchanting uses the separate Craft API / CraftFrame
+        if _G["CraftFrame"] then
+            if not CraftFrame._gmHooked then
+                CraftFrame._gmHooked = true
+                CraftFrame:HookScript("OnShow", function()
+                    C_Timer.After(0.5, function()
+                        Professions:ScanSelf()
+                        Professions:ScanCraftRecipes()
+                    end)
+                end)
+            end
+        end
     end)
 
     pcall(function()
@@ -642,6 +813,24 @@ function Professions:RegisterEvents()
             C_Timer.After(0.5, function()
                 Professions:ScanSelf()
                 Professions:ScanRecipes()
+            end)
+        end)
+    end)
+
+    -- Enchanting: Craft API events (separate from TradeSkill)
+    pcall(function()
+        GM:RegisterEvent("CRAFT_SHOW", function()
+            C_Timer.After(0.5, function()
+                Professions:ScanSelf()
+                Professions:ScanCraftRecipes()
+            end)
+        end)
+    end)
+    pcall(function()
+        GM:RegisterEvent("CRAFT_UPDATE", function()
+            C_Timer.After(0.5, function()
+                Professions:ScanSelf()
+                Professions:ScanCraftRecipes()
             end)
         end)
     end)

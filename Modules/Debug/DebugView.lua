@@ -288,6 +288,8 @@ function DebugView:Render()
             arrow:SetTexture("Interface\\ChatFrame\\ChatFrameExpandArrow")
             arrow:SetTexCoord(coordUL1, coordUL2, coordLL1, coordLL2,
                               coordUR1, coordUR2, coordLR1, coordLR2)
+            -- Strip the yellow/gold tint baked into the texture, then paint white.
+            if arrow.SetDesaturated then arrow:SetDesaturated(true) end
             arrow:SetVertexColor(1, 1, 1, 1)
 
             local dirFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
