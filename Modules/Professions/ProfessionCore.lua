@@ -581,11 +581,37 @@ end
 -- Enchanting uses CraftFrame + GetCraft* APIs, not TradeSkill. This is a TBC
 -- quirk — enchanting was built as a "craft" before the tradeskill system existed.
 
+-- Returns true if ANY of our locally-scanned recipes for the given profession
+-- are missing category info — a signal that we need to force a re-scan so the
+-- new category-capturing code can fill them in.
+local function _NeedsRecategorize(profName)
+    local db = GM.DB.sv.recipes2 and GM.DB.sv.recipes2[profName]
+    if not db then return false end
+    local playerName = UnitName("player") or "?"
+    local realm = GetRealmName and GetRealmName() or "?"
+    local mk = GM.Utils.MemberKey(playerName, realm)
+    for _, data in pairs(db) do
+        if data.crafters then
+            for _, ck in ipairs(data.crafters) do
+                if ck == mk and not data.category then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
 function Professions:ScanCraftRecipes()
     if self._scanningCraft then return end
 
+    -- Force a rescan if our existing Enchanting data has no category info
+    -- (e.g. scanned under an older version). This keeps the debounce while
+    -- ensuring one-time migration works automatically.
+    local forceRescan = _NeedsRecategorize("Enchanting")
+
     local now = GetTime()
-    if self._lastCraftScan and (now - self._lastCraftScan) < 5 then return end
+    if not forceRescan and self._lastCraftScan and (now - self._lastCraftScan) < 5 then return end
 
     self._scanningCraft = true
     self._lastCraftScan = now
@@ -617,6 +643,18 @@ function Professions:_DoScanCraftRecipes()
 
     if not getNumCrafts or not getCraftInfo then return end
 
+    -- Expand every header so recipes within collapsed sections are returned.
+    -- TBC Anniversary: the Craft window can hide entire sub-categories when
+    -- their header is collapsed — without this we might scan 0 recipes.
+    local expandCraftFn = _G["ExpandCraftSkillLine"]
+    if expandCraftFn then
+        local n = getNumCrafts() or 0
+        for i = n, 1, -1 do
+            local _, _, sType = getCraftInfo(i)
+            if sType == "header" then pcall(expandCraftFn, i) end
+        end
+    end
+
     local numCrafts = getNumCrafts()
     if not numCrafts or numCrafts == 0 then return end
 
@@ -644,13 +682,28 @@ function Professions:_DoScanCraftRecipes()
 
     for i = 1, numCrafts do
         local name, _, craftType = getCraftInfo(i)
-        if name and craftType == "header" then
+
+        -- Robust header detection:
+        --  1. Explicit craftType == "header" (standard case)
+        --  2. Fallback: no reagents AND no item link — TBC Anniversary
+        --     sometimes returns nil/empty craftType for enchanting
+        --     category dividers.
+        local isHeader = (craftType == "header")
+        if not isHeader and name then
+            local hasLink = getCraftItemLink and getCraftItemLink(i) ~= nil
+            local reagentCount = getCraftNumReagents and getCraftNumReagents(i) or 0
+            if reagentCount == 0 and not hasLink then
+                isHeader = true
+            end
+        end
+
+        if name and isHeader then
             currentCategory = name
             if not seenCategories[name] then
                 categoryOrder = categoryOrder + 1
                 seenCategories[name] = categoryOrder
             end
-        elseif name and craftType then
+        elseif name then
             recipeOrder = recipeOrder + 1
 
             local recipeLink = getCraftItemLink and getCraftItemLink(i)
