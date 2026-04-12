@@ -298,7 +298,15 @@ function Professions:ScanRecipes()
     self._scanningRecipes = true
     self._lastRecipeScan = now
 
-    _ShowScanStart("Scanning recipes \226\128\148 keep this window open...")
+    -- Announce the scan, but only the FIRST time for this window session.
+    -- Re-scans while the window stays open (triggered by TRADE_SKILL_UPDATE
+    -- pulses) should be silent — otherwise the user sees the same message
+    -- pop up every 5+ seconds.
+    local firstScan = (self._announcedRecipeScan ~= true)
+    if firstScan then
+        _ShowScanStart("Scanning recipes \226\128\148 keep this window open...")
+        self._announcedRecipeScan = true
+    end
 
     local scanResult
     local ok, err = pcall(function() scanResult = self:_DoScanRecipes() end)
@@ -308,7 +316,9 @@ function Professions:ScanRecipes()
         return
     end
 
-    if scanResult then
+    -- Only announce completion if something actually changed OR this was
+    -- the announced first scan — otherwise quiet no-op re-scans.
+    if scanResult and (scanResult.changed or firstScan) then
         _ShowScanComplete(string.format("Synced %d %s recipes to the guild",
             scanResult.count or 0, scanResult.profName or "?"))
     end
@@ -577,7 +587,13 @@ function Professions:ScanCraftRecipes()
     self._scanningCraft = true
     self._lastCraftScan = now
 
-    _ShowScanStart("Scanning enchants \226\128\148 keep this window open...")
+    -- Announce only the first scan of this window session; silence noisy
+    -- re-scans triggered by CRAFT_UPDATE pulses.
+    local firstScan = (self._announcedCraftScan ~= true)
+    if firstScan then
+        _ShowScanStart("Scanning enchants \226\128\148 keep this window open...")
+        self._announcedCraftScan = true
+    end
 
     local scanResult
     local ok, err = pcall(function() scanResult = self:_DoScanCraftRecipes() end)
@@ -587,7 +603,7 @@ function Professions:ScanCraftRecipes()
         return
     end
 
-    if scanResult then
+    if scanResult and (scanResult.changed or firstScan) then
         _ShowScanComplete(string.format("Synced %d %s recipes to the guild",
             scanResult.count or 0, scanResult.profName or "?"))
     end
@@ -1062,7 +1078,13 @@ function Professions:RegisterEvents()
     -- Tradeskill window events — all coalesced into one scan
     pcall(function()
         GM:RegisterEvent("TRADE_SKILL_SHOW", function()
+            Professions._announcedRecipeScan = nil  -- fresh session → allow announcement
             Professions:_QueueTradeSkillScan()
+        end)
+    end)
+    pcall(function()
+        GM:RegisterEvent("TRADE_SKILL_CLOSE", function()
+            Professions._announcedRecipeScan = nil
         end)
     end)
     pcall(function()
@@ -1074,7 +1096,13 @@ function Professions:RegisterEvents()
     -- Enchanting: Craft API events (separate from TradeSkill)
     pcall(function()
         GM:RegisterEvent("CRAFT_SHOW", function()
+            Professions._announcedCraftScan = nil  -- fresh session → allow announcement
             Professions:_QueueCraftScan()
+        end)
+    end)
+    pcall(function()
+        GM:RegisterEvent("CRAFT_CLOSE", function()
+            Professions._announcedCraftScan = nil
         end)
     end)
     pcall(function()
@@ -1085,18 +1113,27 @@ function Professions:RegisterEvents()
 
     -- Fallback: hook the frames in case the events don't fire (TBC Anniversary
     -- sometimes misses them). The HookScript OnShow callback just queues the
-    -- same coalesced scan, so no duplicate work.
+    -- same coalesced scan, so no duplicate work. OnHide resets the announce
+    -- flag so the next open gets a fresh message.
     C_Timer.After(3, function()
         if _G["TradeSkillFrame"] and not TradeSkillFrame._gmHooked then
             TradeSkillFrame._gmHooked = true
             TradeSkillFrame:HookScript("OnShow", function()
+                Professions._announcedRecipeScan = nil
                 Professions:_QueueTradeSkillScan()
+            end)
+            TradeSkillFrame:HookScript("OnHide", function()
+                Professions._announcedRecipeScan = nil
             end)
         end
         if _G["CraftFrame"] and not CraftFrame._gmHooked then
             CraftFrame._gmHooked = true
             CraftFrame:HookScript("OnShow", function()
+                Professions._announcedCraftScan = nil
                 Professions:_QueueCraftScan()
+            end)
+            CraftFrame:HookScript("OnHide", function()
+                Professions._announcedCraftScan = nil
             end)
         end
     end)
