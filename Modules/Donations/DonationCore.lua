@@ -475,7 +475,26 @@ function Donations:OnCommReceived(message, _channel, sender)
             local sn, sr = sender:match("^(.+)-(.+)$")
             sn = sn or sender
             sr = sr or realm
-            Donations:SetAddonUser(Utils.MemberKey(sn, sr), version)
+            local senderKey = Utils.MemberKey(sn, sr)
+            local wasKnown = GM.DB.sv.addonUsers and GM.DB.sv.addonUsers[senderKey] ~= nil
+            Donations:SetAddonUser(senderKey, version)
+
+            -- Handshake: if this sender was previously unknown to us, send
+            -- our own HELLO back so they also learn our version. Without
+            -- this, the version gate would drop our broadcasts on their
+            -- side until their *next* login. Debounced so two newcomers
+            -- greeting each other don't ping-pong forever.
+            if not wasKnown then
+                local lastSent = GM._lastHelloSentAt or 0
+                local now = GetTime()
+                if (now - lastSent) > 10 then
+                    GM._lastHelloSentAt = now
+                    C_Timer.After(1, function()
+                        GM:SendCommMessage("GuildMate",
+                            "HELLO|" .. (GM.version or "0.0.0"), "GUILD")
+                    end)
+                end
+            end
 
             -- New member just came online — share everything we have
             -- so they don't have to wait for bank open or tradeskill scan.
