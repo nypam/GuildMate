@@ -31,3 +31,5 @@ Modules\Donations\GoalEditor.lua
 Modules\Donations\OfficerView.lua
 Modules\Donations\MemberView.lua
 Modules\Donations\SettingsView.lua
+
+Modules\Debug\DebugView.lua

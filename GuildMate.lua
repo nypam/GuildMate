@@ -69,6 +69,18 @@ function GM:OnInitialize()
             { id = "req_craft", label = "Craft", icon = "Interface\\Icons\\Trade_BlackSmithing", module = { Render = function() GM.MainFrame:_ShowComingSoon("Craft Requests") end } },
         })
 
+    self.MainFrame:RegisterModule(
+        "debug",
+        "Debug",
+        "Interface\\Icons\\INV_Misc_Gear_01",
+        { Render = function()
+            if GM.DebugView then
+                GM.DebugView:Render()
+            else
+                GM.MainFrame:_ShowComingSoon("Debug (load error)")
+            end
+        end })
+
     -- Minimap button
     self:_CreateMinimapButton()
 
@@ -80,9 +92,21 @@ function GM:OnInitialize()
     self:RegisterChatCommand("gm", "SlashCommand")
 end
 
+-- Init comm stats early (before any SendCommMessage call)
+GM._commStats = { sent = 0, received = 0, bytesSent = 0, bytesReceived = 0 }
+
 function GM:OnEnable()
     self.Events:Register()
-    -- GUILD_ROSTER_UPDATE fires automatically; no manual request needed in TBC Anniversary.
+
+    -- Wrap SendCommMessage to track outgoing comm stats
+    local origSend = self.SendCommMessage
+    self.SendCommMessage = function(self, prefix, message, ...)
+        if prefix == "GuildMate" and self._commStats then
+            self._commStats.sent = self._commStats.sent + 1
+            self._commStats.bytesSent = self._commStats.bytesSent + #message
+        end
+        return origSend(self, prefix, message, ...)
+    end
 end
 
 function GM:OnDisable()
@@ -123,6 +147,44 @@ function GM:SlashCommand(input)
         self.debugOfficer = not self.debugOfficer
         self:Print(self.debugOfficer and GM.L["DEBUG_OFFICER_ON"] or GM.L["DEBUG_OFFICER_OFF"])
         self.MainFrame:RefreshActiveView()
+
+    elseif input == "backup" then
+        GM.DB:BackupDonations("manual")
+        self:Print("|cff4A90D9GuildMate:|r Donation history backed up.")
+
+    elseif input == "backups" or input == "listbackups" then
+        local list = GM.DB:ListDonationBackups()
+        if #list == 0 then
+            self:Print("|cff4A90D9GuildMate:|r No backups yet.")
+        else
+            self:Print("|cff4A90D9GuildMate backups:|r")
+            for _, b in ipairs(list) do
+                self:Print(string.format("  [%d]  %s  %d members  (%s)",
+                    b.slot, date("%Y-%m-%d %H:%M", b.timestamp), b.count, b.reason))
+            end
+            self:Print("|cffaaaaaaUse /gm restore <slot> to restore a backup|r")
+        end
+
+    elseif input:match("^restore") then
+        local slot = tonumber(input:match("^restore%s+(%d+)$")) or 1
+        local ok, ts, reason = GM.DB:RestoreDonations(slot)
+        if ok then
+            self:Print(string.format("|cff5fba47GuildMate:|r Restored backup from %s (%s)",
+                date("%Y-%m-%d %H:%M", ts), reason))
+            self.MainFrame:RefreshActiveView()
+        else
+            self:Print("|cffcc3333GuildMate:|r Backup slot " .. slot .. " does not exist.")
+        end
+
+    elseif input:match("^rescan") then
+        local days = tonumber(input:match("^rescan%s+(%d+)$")) or 3
+        if not _G["GuildBankFrame"] or not GuildBankFrame:IsShown() then
+            self:Print("|cffcc3333GuildMate:|r Guild bank must be open to rescan.")
+        else
+            GM.Donations:RescanRecent(days)
+            self:Print(string.format("|cff5fba47GuildMate:|r Rescanned last %d day(s) from bank log.", days))
+            self.MainFrame:RefreshActiveView()
+        end
     elseif input == "scanlog" then
         local out = {}
 
@@ -182,7 +244,12 @@ function GM:SlashCommand(input)
 
         if GM.Donations and GM.Donations.BroadcastKnownTotals then
             GM.Donations:BroadcastKnownTotals()
-            self:Print("  → Donation totals broadcasted")
+            self:Print("  → Donation totals broadcasted (aggregated, for older clients)")
+        end
+
+        if GM.Donations and GM.Donations.BroadcastDonationLog then
+            GM.Donations:BroadcastDonationLog(60)
+            self:Print("  → Donation events broadcasted (last 60 days)")
         end
 
         if GM.Professions and GM.Professions.ScanSelf then
@@ -227,8 +294,8 @@ function GM:SlashCommand(input)
         self:Print("  Profession records: " .. profCount)
 
         local recipeProfs = 0
-        if GM.DB.sv.recipes then
-            for _ in pairs(GM.DB.sv.recipes) do recipeProfs = recipeProfs + 1 end
+        if GM.DB.sv.recipes2 then
+            for _ in pairs(GM.DB.sv.recipes2) do recipeProfs = recipeProfs + 1 end
         end
         self:Print("  Recipe professions: " .. recipeProfs)
 
@@ -458,6 +525,10 @@ end
 function GM:OnCommReceived(prefix, message, channel, sender)
     if prefix ~= "GuildMate" then return end
     if sender == UnitName("player") then return end  -- ignore our own messages
+
+    -- Track comm stats
+    self._commStats.received = self._commStats.received + 1
+    self._commStats.bytesReceived = self._commStats.bytesReceived + #message
 
     -- Comm debug logging
     if self._commDebug then

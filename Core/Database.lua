@@ -1,47 +1,56 @@
 -- GuildMate: Database layer
 -- Defines the SavedVariables schema and provides clean accessors.
--- guildMate.lua loads first and creates the addon; we fetch it here.
 
 local GM = LibStub("AceAddon-3.0"):GetAddon("GuildMate") ---@type table
 local DB = {}
 GM.DB = DB
 
+-- ── Schema version — bump when migration logic changes ──────────────────────
+local SCHEMA_VERSION = 6
+
 -- Default schema — merged with any existing SavedVariables on load
 DB.defaults = {
-    version = 1,
+    version = SCHEMA_VERSION,
 
     -- Active and past donation goals, keyed by a numeric id
     goals = {},
 
     -- Per-member donation records, keyed by "Name-Realm"
+    -- [periodKey] = copperTotal (plain number, max-merged)
+    -- Kept for backward compatibility with older addon versions.
+    -- Source of truth for new clients is donationLog (below).
     donations = {},
 
-    -- Persisted transaction fingerprints for deduplication across reloads.
-    -- [fingerprint] = expiry Unix timestamp (pruned after TRANSACTION_TTL seconds)
-    seenTransactions = {},
+    -- Event log: one entry per deposit, chronological.
+    -- { id, timestamp, memberKey, amount, periodKey, synthetic? }
+    -- `id` is a stable fingerprint for dedup across reloads and sync.
+    -- `synthetic=true` means the timestamp is approximated (from old data).
+    donationLog = {},
+
+    -- Set of seen event IDs for fast dedup (avoids scanning log every time)
+    -- [id] = true
+    donationLogSeen = {},
+
+    -- Per-member profession data
+    professions = {},
+
+    -- Per-profession recipe data, keyed by spellID string
+    recipes2 = {},
+
+    -- Who has the addon installed (persisted)
+    addonUsers = {},
 
     -- Addon-wide settings
     settings = {
-        -- Rank indices (0-based) whose members see the officer view.
-        -- 0 = Guild Master is always implicitly included.
         officerRanks = { [0] = true, [1] = true },
-
         reminderEnabled = true,
         reminderMessage = "Hi %s! Don't forget the %p guild donation goal of %g. You've donated %d so far.",
-
-        -- "GUILD" | "OFFICER" | "OFF"
         announceChannel = "GUILD",
-
-        -- Announce in /g when a member meets their donation goal
         goalMetAnnounce = true,
-
-        -- Main window geometry
         windowWidth  = 900,
         windowHeight = 550,
         windowX      = nil,
         windowY      = nil,
-
-        -- Minimap button angle
         minimapPos   = 45,
     },
 }
@@ -53,25 +62,417 @@ function DB:Init()
     self.sv = GuildMateDB
 end
 
--- Shallow-merge defaults into an existing (or empty) saved-variable table
+-- Snapshot donations to a rolling backup slot.
+-- Called before any destructive operation. Keeps the last 5 backups.
+function DB:BackupDonations(reason)
+    if not self.sv.donations then return end
+    if not self.sv.donationBackups then self.sv.donationBackups = {} end
+
+    local backup = {
+        timestamp = time(),
+        reason    = reason or "manual",
+        donations = self:_DeepCopy(self.sv.donations),
+    }
+
+    table.insert(self.sv.donationBackups, 1, backup)
+
+    -- Keep only last 5
+    while #self.sv.donationBackups > 5 do
+        table.remove(self.sv.donationBackups)
+    end
+end
+
+-- Restore donations from a backup slot (1 = most recent, 5 = oldest).
+-- Returns true on success, false if slot doesn't exist.
+function DB:RestoreDonations(slot)
+    slot = slot or 1
+    if not self.sv.donationBackups or not self.sv.donationBackups[slot] then
+        return false
+    end
+    local backup = self.sv.donationBackups[slot]
+    self.sv.donations = self:_DeepCopy(backup.donations)
+    return true, backup.timestamp, backup.reason
+end
+
+-- List all backups: returns array of { timestamp, reason, entryCount }
+function DB:ListDonationBackups()
+    local list = {}
+    if not self.sv.donationBackups then return list end
+    for i, b in ipairs(self.sv.donationBackups) do
+        local count = 0
+        for _ in pairs(b.donations or {}) do count = count + 1 end
+        list[#list + 1] = {
+            slot      = i,
+            timestamp = b.timestamp,
+            reason    = b.reason,
+            count     = count,
+        }
+    end
+    return list
+end
+
+-- Merge defaults + run migrations
 function DB:_Migrate(sv)
+    -- Merge top-level defaults
     for k, v in pairs(self.defaults) do
         if sv[k] == nil then
-            if type(v) == "table" then
-                sv[k] = self:_DeepCopy(v)
-            else
-                sv[k] = v
-            end
+            sv[k] = (type(v) == "table") and self:_DeepCopy(v) or v
         end
     end
 
-    -- Nested: settings
+    -- Merge nested settings defaults
     if sv.settings then
         for k, v in pairs(self.defaults.settings) do
             if sv.settings[k] == nil then
                 sv.settings[k] = (type(v) == "table") and self:_DeepCopy(v) or v
             end
         end
+    end
+
+    -- ── Schema v2 migrations ─────────────────────────────────────────────────
+    if (sv.version or 1) < 2 then
+        -- Auto-backup donations before any migration that touches them
+        if sv.donations and next(sv.donations) then
+            sv.donationBackups = sv.donationBackups or {}
+            table.insert(sv.donationBackups, 1, {
+                timestamp = time(),
+                reason    = "pre-v2-migration",
+                donations = self:_DeepCopy(sv.donations),
+            })
+            while #sv.donationBackups > 5 do table.remove(sv.donationBackups) end
+        end
+
+        -- Delete dead tables from older versions
+        sv.seenTransactions = nil
+        sv.debugScan = nil
+        sv.recipes = nil  -- replaced by recipes2
+
+        -- Migrate donation records from {own, synced} to plain numbers
+        if sv.donations then
+            for _, rec in pairs(sv.donations) do
+                if rec.records then
+                    for pk, val in pairs(rec.records) do
+                        if type(val) == "table" then
+                            rec.records[pk] = math.max(val.own or 0, val.synced or 0)
+                        end
+                    end
+                end
+            end
+        end
+
+        sv.version = 2
+    end
+
+    -- ── Schema v3: fix double-counting from pre-log aggregates ──────────────
+    -- Previous version made AddDonationEvent additive, causing events to be
+    -- double-counted on top of existing aggregated donations from v1/v2.
+    -- This recomputes every period total as max(event sum, original aggregate).
+    if (sv.version or 1) < 3 then
+        -- Backup first
+        if sv.donations and next(sv.donations) then
+            sv.donationBackups = sv.donationBackups or {}
+            table.insert(sv.donationBackups, 1, {
+                timestamp = time(),
+                reason    = "pre-v3-migration",
+                donations = self:_DeepCopy(sv.donations),
+            })
+            while #sv.donationBackups > 5 do table.remove(sv.donationBackups) end
+        end
+
+        -- Compute log sums per (member, period)
+        local logSums = {}
+        for _, e in ipairs(sv.donationLog or {}) do
+            logSums[e.memberKey] = logSums[e.memberKey] or {}
+            local ps = logSums[e.memberKey]
+            ps[e.periodKey] = (ps[e.periodKey] or 0) + (e.amount or 0)
+        end
+
+        -- For each stored donation, cap it at max(log sum, original value before double-counting).
+        -- We don't know the "original", but we know: if logSum > current, current was under-counted
+        -- (shouldn't happen). If logSum < current, the excess might be pre-log data OR double-count.
+        -- Strategy: if current > 2 * logSum and logSum > 0, assume double-count and use logSum.
+        -- Otherwise preserve current (safer — keeps pre-log data).
+        if sv.donations then
+            for mk, rec in pairs(sv.donations) do
+                if rec.records then
+                    local ps = logSums[mk] or {}
+                    for pk, val in pairs(rec.records) do
+                        if type(val) == "table" then
+                            val = math.max(val.own or 0, val.synced or 0)
+                        end
+                        local logSum = ps[pk] or 0
+                        if logSum > 0 and val > logSum then
+                            -- Likely double-counted. Use log sum as truth.
+                            rec.records[pk] = logSum
+                        else
+                            rec.records[pk] = val
+                        end
+                    end
+                end
+            end
+        end
+
+        sv.version = 3
+    end
+
+    -- ── Schema v4: rebuild event log with stable absolute-time fingerprints ──
+    -- Old fingerprints used relative time offsets (year/month/day/hour-ago from
+    -- WoW's bank API) which shift as time passes, creating duplicate events.
+    -- New fingerprints use absolute hour buckets.
+    if (sv.version or 1) < 4 then
+        -- Backup
+        if sv.donations and next(sv.donations) then
+            sv.donationBackups = sv.donationBackups or {}
+            table.insert(sv.donationBackups, 1, {
+                timestamp = time(),
+                reason    = "pre-v4-migration",
+                donations = self:_DeepCopy(sv.donations),
+            })
+            while #sv.donationBackups > 5 do table.remove(sv.donationBackups) end
+        end
+
+        -- Rebuild donationLog with new-format IDs, deduping at the same time.
+        -- Group existing events by (memberKey, amount, hour bucket) — the new
+        -- fingerprint — and keep only one per bucket.
+        local newLog = {}
+        local newSeen = {}
+
+        for _, e in ipairs(sv.donationLog or {}) do
+            if e.synthetic then
+                -- Preserve synthetic events with their old IDs
+                if not newSeen[e.id] then
+                    newLog[#newLog + 1] = e
+                    newSeen[e.id] = true
+                end
+            else
+                local ts = e.timestamp or 0
+                if ts > 0 then
+                    local hourBucket = math.floor(ts / 3600)
+                    local newId = string.format("%s|%d|%d",
+                        e.memberKey, e.amount or 0, hourBucket)
+                    if not newSeen[newId] then
+                        e.id = newId
+                        newLog[#newLog + 1] = e
+                        newSeen[newId] = true
+                    end
+                    -- else: duplicate event, drop it
+                else
+                    -- No timestamp (shouldn't happen for non-synthetic), keep as-is
+                    if not newSeen[e.id] then
+                        newLog[#newLog + 1] = e
+                        newSeen[e.id] = true
+                    end
+                end
+            end
+        end
+
+        sv.donationLog = newLog
+        sv.donationLogSeen = newSeen
+
+        -- Recompute aggregated donation totals from the deduplicated log
+        if sv.donations then
+            -- Compute log sums
+            local logSums = {}
+            for _, e in ipairs(sv.donationLog) do
+                logSums[e.memberKey] = logSums[e.memberKey] or {}
+                local ps = logSums[e.memberKey]
+                ps[e.periodKey] = (ps[e.periodKey] or 0) + (e.amount or 0)
+            end
+
+            for mk, rec in pairs(sv.donations) do
+                if rec.records then
+                    local ps = logSums[mk] or {}
+                    for pk, val in pairs(rec.records) do
+                        if type(val) == "table" then
+                            val = math.max(val.own or 0, val.synced or 0)
+                        end
+                        local logSum = ps[pk] or 0
+                        -- Trust the log if we have it; otherwise preserve existing value
+                        if logSum > 0 then
+                            rec.records[pk] = logSum
+                        else
+                            rec.records[pk] = val
+                        end
+                    end
+                end
+            end
+        end
+
+        sv.version = 4
+    end
+
+    -- ── Schema v5: rebuild log with 6-hour buckets (WoW fuzzy timestamps) ───
+    -- The 1-hour bucket from v4 is still too precise — WoW's "X hours ago"
+    -- drifts by ±1 hour causing same deposits to land in adjacent buckets.
+    -- Quantize to 6-hour windows to absorb that drift.
+    if (sv.version or 1) < 5 then
+        if sv.donations and next(sv.donations) then
+            sv.donationBackups = sv.donationBackups or {}
+            table.insert(sv.donationBackups, 1, {
+                timestamp = time(),
+                reason    = "pre-v5-migration",
+                donations = self:_DeepCopy(sv.donations),
+            })
+            while #sv.donationBackups > 5 do table.remove(sv.donationBackups) end
+        end
+
+        local newLog = {}
+        local newSeen = {}
+
+        for _, e in ipairs(sv.donationLog or {}) do
+            if e.synthetic then
+                if not newSeen[e.id] then
+                    newLog[#newLog + 1] = e
+                    newSeen[e.id] = true
+                end
+            else
+                local ts = e.timestamp or 0
+                if ts > 0 then
+                    local sixHourBucket = math.floor(ts / (6 * 3600))
+                    local newId = string.format("%s|%d|%d",
+                        e.memberKey, e.amount or 0, sixHourBucket)
+                    if not newSeen[newId] then
+                        e.id = newId
+                        newLog[#newLog + 1] = e
+                        newSeen[newId] = true
+                    end
+                else
+                    if not newSeen[e.id] then
+                        newLog[#newLog + 1] = e
+                        newSeen[e.id] = true
+                    end
+                end
+            end
+        end
+
+        sv.donationLog = newLog
+        sv.donationLogSeen = newSeen
+
+        -- Recompute aggregated totals from clean log
+        if sv.donations then
+            local logSums = {}
+            for _, e in ipairs(sv.donationLog) do
+                logSums[e.memberKey] = logSums[e.memberKey] or {}
+                local ps = logSums[e.memberKey]
+                ps[e.periodKey] = (ps[e.periodKey] or 0) + (e.amount or 0)
+            end
+
+            for mk, rec in pairs(sv.donations) do
+                if rec.records then
+                    local ps = logSums[mk] or {}
+                    for pk, val in pairs(rec.records) do
+                        if type(val) == "table" then
+                            val = math.max(val.own or 0, val.synced or 0)
+                        end
+                        local logSum = ps[pk] or 0
+                        if logSum > 0 then
+                            rec.records[pk] = logSum
+                        else
+                            rec.records[pk] = val
+                        end
+                    end
+                end
+            end
+        end
+
+        sv.version = 5
+    end
+
+    -- ── Schema v6: proximity-based dedup for donation log ───────────────────
+    -- Previous bucket-based approaches either created phantom duplicates
+    -- (hour bucket too precise) or merged legitimate separate deposits
+    -- (6-hour bucket too coarse). The new approach keeps all events with
+    -- their real timestamps and uses a ±2h proximity check at scan time.
+    -- This migration rebuilds the log by merging events that are likely
+    -- duplicates (same member+amount within 2 hours).
+    if (sv.version or 1) < 6 then
+        if sv.donations and next(sv.donations) then
+            sv.donationBackups = sv.donationBackups or {}
+            table.insert(sv.donationBackups, 1, {
+                timestamp = time(),
+                reason    = "pre-v6-migration",
+                donations = self:_DeepCopy(sv.donations),
+            })
+            while #sv.donationBackups > 5 do table.remove(sv.donationBackups) end
+        end
+
+        local DRIFT = 2 * 3600
+        local kept = {}  -- final log
+        local newSeen = {}
+
+        -- Sort by timestamp so we process chronologically
+        local sorted = {}
+        for _, e in ipairs(sv.donationLog or {}) do
+            sorted[#sorted + 1] = e
+        end
+        table.sort(sorted, function(a, b)
+            return (a.timestamp or 0) < (b.timestamp or 0)
+        end)
+
+        for _, e in ipairs(sorted) do
+            if e.synthetic then
+                if not newSeen[e.id] then
+                    kept[#kept + 1] = e
+                    newSeen[e.id] = true
+                end
+            else
+                local ts = e.timestamp or 0
+                -- Regenerate ID with the new format
+                local newId = string.format("%s|%d|%d",
+                    e.memberKey, e.amount or 0, ts)
+
+                -- Check if we already kept a close match
+                local dup = false
+                for _, k in ipairs(kept) do
+                    if not k.synthetic
+                       and k.memberKey == e.memberKey
+                       and k.amount == e.amount
+                       and k.timestamp
+                       and math.abs(k.timestamp - ts) < DRIFT then
+                        dup = true
+                        break
+                    end
+                end
+
+                if not dup then
+                    e.id = newId
+                    kept[#kept + 1] = e
+                    newSeen[newId] = true
+                end
+            end
+        end
+
+        sv.donationLog = kept
+        sv.donationLogSeen = newSeen
+
+        -- Recompute aggregated totals from the cleaned log
+        if sv.donations then
+            local logSums = {}
+            for _, e in ipairs(sv.donationLog) do
+                logSums[e.memberKey] = logSums[e.memberKey] or {}
+                local ps = logSums[e.memberKey]
+                ps[e.periodKey] = (ps[e.periodKey] or 0) + (e.amount or 0)
+            end
+
+            for mk, rec in pairs(sv.donations) do
+                if rec.records then
+                    local ps = logSums[mk] or {}
+                    for pk, val in pairs(rec.records) do
+                        if type(val) == "table" then
+                            val = math.max(val.own or 0, val.synced or 0)
+                        end
+                        local logSum = ps[pk] or 0
+                        if logSum > 0 then
+                            rec.records[pk] = logSum
+                        else
+                            rec.records[pk] = val
+                        end
+                    end
+                end
+            end
+        end
+
+        sv.version = SCHEMA_VERSION
     end
 end
 
@@ -83,7 +484,7 @@ function DB:_DeepCopy(orig)
     return copy
 end
 
--- ── Settings helpers ──────────────────────────────────────────────────────────
+-- ── Settings helpers ─────────────────────────────────────────────────────────
 
 function DB:GetSetting(key)
     return self.sv.settings[key]
@@ -94,11 +495,11 @@ function DB:SetSetting(key, value)
 end
 
 function DB:IsOfficerRank(rankIndex)
-    if rankIndex == 0 then return true end  -- Guild Master always
+    if rankIndex == 0 then return true end
     return self.sv.settings.officerRanks[rankIndex] == true
 end
 
--- ── Goal helpers ──────────────────────────────────────────────────────────────
+-- ── Goal helpers ─────────────────────────────────────────────────────────────
 
 function DB:NextGoalId()
     local maxId = 0
@@ -125,13 +526,13 @@ function DB:DeactivateAllGoals()
     end
 end
 
--- ── Donation record helpers ───────────────────────────────────────────────────
+-- ── Donation record helpers ──────────────────────────────────────────────────
 
 -- Returns (or creates) the donation record for a member key ("Name-Realm")
 function DB:GetMemberRecord(memberKey)
     if not self.sv.donations[memberKey] then
         self.sv.donations[memberKey] = {
-            records     = {},   -- [periodKey] = { own=N, synced=N }
+            records     = {},   -- [periodKey] = copperTotal (plain number)
             lastDeposit = 0,
             rankIndex   = -1,
         }
@@ -139,37 +540,15 @@ function DB:GetMemberRecord(memberKey)
     return self.sv.donations[memberKey]
 end
 
--- Ensure a period entry is in {own, synced} format.
--- Migrates legacy plain-number entries written by older addon versions.
-local function _Normalize(rec, periodKey)
-    local r = rec.records[periodKey]
-    if r == nil then
-        rec.records[periodKey] = { own = 0, synced = 0 }
-    elseif type(r) == "number" then
-        rec.records[periodKey] = { own = r, synced = 0 }
-    end
-    return rec.records[periodKey]
-end
-
--- Add copper from a bank transaction this client personally read.
--- Returns the new effective total (max of own and synced).
-function DB:AddDonation(memberKey, periodKey, copper)
-    local rec = self:GetMemberRecord(memberKey)
-    local r = _Normalize(rec, periodKey)
-    r.own = r.own + copper
-    rec.lastDeposit = time()
-    return math.max(r.own, r.synced)
-end
-
 -- Donated copper for a member in a specific period (0 if none).
--- Returns max(own, synced) so either source produces the correct total.
 function DB:GetDonated(memberKey, periodKey)
     local rec = self.sv.donations[memberKey]
     if not rec then return 0 end
     local r = rec.records[periodKey]
     if not r then return 0 end
-    if type(r) == "number" then return r end  -- legacy entry not yet normalised
-    return math.max(r.own or 0, r.synced or 0)
+    -- Handle legacy {own, synced} tables from pre-v2 data
+    if type(r) == "table" then return math.max(r.own or 0, r.synced or 0) end
+    return r
 end
 
 -- Update a member's rank index (called on roster refresh)
@@ -178,44 +557,106 @@ function DB:SetMemberRank(memberKey, rankIndex)
     rec.rankIndex = rankIndex
 end
 
--- ── Transaction deduplication ─────────────────────────────────────────────────
+-- ── Donation event log ──────────────────────────────────────────────────────
 
--- How long (seconds) to remember a fingerprint — 45 days covers any period
-local TRANSACTION_TTL = 45 * 86400
+-- Add a deposit event to the log. Returns true if added (new), false if dup.
+-- id is a stable fingerprint. The aggregated donations[periodKey] total is
+-- recomputed by summing all events for that member+period, so we stay
+-- consistent even if some events were imported from pre-log aggregates.
+function DB:AddDonationEvent(event)
+    if not event or not event.id then return false end
 
-function DB:HasSeenTransaction(fp)
-    local expiry = self.sv.seenTransactions[fp]
-    if not expiry then return false end
-    if time() > expiry then
-        self.sv.seenTransactions[fp] = nil  -- expired; treat as unseen
-        return false
-    end
+    self.sv.donationLogSeen = self.sv.donationLogSeen or {}
+    if self.sv.donationLogSeen[event.id] then return false end
+
+    self.sv.donationLog = self.sv.donationLog or {}
+    self.sv.donationLog[#self.sv.donationLog + 1] = event
+    self.sv.donationLogSeen[event.id] = true
+
+    -- Recompute the aggregated total from the log (idempotent, not additive)
+    self:_RecomputePeriodTotal(event.memberKey, event.periodKey)
+
     return true
 end
 
-function DB:MarkTransactionSeen(fp)
-    self.sv.seenTransactions[fp] = time() + TRANSACTION_TTL
-end
-
--- Remove fingerprints whose TTL has elapsed. Call occasionally (e.g. on login).
-function DB:PruneSeenTransactions()
-    local now = time()
-    for fp, expiry in pairs(self.sv.seenTransactions) do
-        if now > expiry then
-            self.sv.seenTransactions[fp] = nil
+-- Rebuild donations[memberKey][periodKey] by summing events from the log.
+-- Takes the MAX of (log sum, existing stored total) to preserve pre-log data.
+function DB:_RecomputePeriodTotal(memberKey, periodKey)
+    local logSum = 0
+    local latestTs = 0
+    for _, e in ipairs(self.sv.donationLog or {}) do
+        if e.memberKey == memberKey and e.periodKey == periodKey then
+            logSum = logSum + (e.amount or 0)
+            if (e.timestamp or 0) > latestTs then latestTs = e.timestamp end
         end
     end
+
+    local rec = self:GetMemberRecord(memberKey)
+    local existing = rec.records[periodKey] or 0
+    if type(existing) == "table" then
+        existing = math.max(existing.own or 0, existing.synced or 0)
+    end
+
+    -- Use max so we never lose pre-log aggregated data
+    rec.records[periodKey] = math.max(logSum, existing)
+    rec.lastDeposit = math.max(rec.lastDeposit or 0, latestTs)
 end
 
--- ── Idempotent total setter (used by comm sync) ───────────────────────────────
+-- Check if a log event with this id has been seen
+function DB:HasDonationEvent(id)
+    return self.sv.donationLogSeen and self.sv.donationLogSeen[id] or false
+end
 
--- Updates the synced (comm-received) total to max(current_synced, newTotal).
--- Never touches own (bank-captured) total, so the two sources stay independent.
+-- Get all log events, optionally filtered by period
+function DB:GetDonationLog(filter)
+    local log = self.sv.donationLog or {}
+    if not filter then return log end
+    local result = {}
+    for _, e in ipairs(log) do
+        if (not filter.memberKey or e.memberKey == filter.memberKey)
+           and (not filter.periodKey or e.periodKey == filter.periodKey)
+           and (not filter.since or (e.timestamp or 0) >= filter.since) then
+            result[#result + 1] = e
+        end
+    end
+    return result
+end
+
+-- ── Idempotent total setter (max-merge) ─────────────────────────────────────
+
+-- Sets a member's period total to max(current, newTotal).
+-- Safe to call multiple times — never decreases a total.
+-- If there's a gap between our log-derived total and the incoming aggregate,
+-- record a synthetic event to capture the difference (no timestamp available).
 function DB:SetDonationTotal(memberKey, periodKey, newTotal)
     local rec = self:GetMemberRecord(memberKey)
-    local r = _Normalize(rec, periodKey)
-    if newTotal > r.synced then
-        r.synced = newTotal
+    local current = rec.records[periodKey] or 0
+    if type(current) == "table" then
+        current = math.max(current.own or 0, current.synced or 0)
+    end
+
+    if newTotal > current then
+        local gap = newTotal - current
+        rec.records[periodKey] = newTotal
         rec.lastDeposit = time()
+
+        -- Record the gap as a synthetic event so we don't lose detail later
+        -- (only for gaps > 0 that likely come from old client aggregated broadcasts)
+        if gap > 0 then
+            local syntheticId = "syn:" .. memberKey .. ":" .. periodKey .. ":" .. newTotal
+            self.sv.donationLogSeen = self.sv.donationLogSeen or {}
+            if not self.sv.donationLogSeen[syntheticId] then
+                self.sv.donationLog = self.sv.donationLog or {}
+                self.sv.donationLog[#self.sv.donationLog + 1] = {
+                    id        = syntheticId,
+                    timestamp = 0,  -- unknown
+                    memberKey = memberKey,
+                    amount    = gap,
+                    periodKey = periodKey,
+                    synthetic = true,
+                }
+                self.sv.donationLogSeen[syntheticId] = true
+            end
+        end
     end
 end

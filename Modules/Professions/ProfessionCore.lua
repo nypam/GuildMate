@@ -161,6 +161,41 @@ function Professions:GetOverview()
     return result
 end
 
+-- ── Data pruning ─────────────────────────────────────────────────────────────
+
+-- Remove profession/recipe data for members no longer in the guild roster.
+function Professions:PruneStaleData(roster)
+    if not roster or not next(roster) then return end
+
+    -- Prune profession records for ex-members
+    local profDB = GM.DB.sv.professions
+    if profDB then
+        for key in pairs(profDB) do
+            if not roster[key] then
+                profDB[key] = nil
+            end
+        end
+    end
+
+    -- Prune crafter entries in recipes
+    local recipeDB = GM.DB.sv.recipes2
+    if recipeDB then
+        for _, profRecipes in pairs(recipeDB) do
+            for _, recipeData in pairs(profRecipes) do
+                if recipeData.crafters then
+                    local clean = {}
+                    for _, ck in ipairs(recipeData.crafters) do
+                        if roster[ck] then
+                            clean[#clean + 1] = ck
+                        end
+                    end
+                    recipeData.crafters = clean
+                end
+            end
+        end
+    end
+end
+
 -- ── Recipe DB helpers ─────────────────────────────────────────────────────────
 -- Recipes are keyed by spellID (number) so they're locale-independent.
 -- At display time, GetSpellInfo(spellID) resolves the localized name + icon.
@@ -369,13 +404,28 @@ function Professions:BroadcastRecipes(memberKey, profName)
     local profRecipes = db[profName]
     if not profRecipes then return end
 
-    -- Build list: "spellID~iconID;spellID~iconID;..."
+    -- Build list: "spellID~icon~reagents;..." where reagents = "name:count:icon,..."
     local parts = {}
     for spellIDStr, data in pairs(profRecipes) do
         for _, ck in ipairs(data.crafters) do
             if ck == memberKey then
                 local iconStr = data.icon and tostring(data.icon) or "0"
-                parts[#parts + 1] = spellIDStr .. "~" .. iconStr
+                -- Encode reagents with backslash-based escaping (safe for all item names)
+                local reagentParts = {}
+                if data.reagents then
+                    for _, r in ipairs(data.reagents) do
+                        local rIcon = r.icon and tostring(r.icon) or "0"
+                        local safeName = (r.name or "?")
+                            :gsub("\\", "\\\\")
+                            :gsub(":", "\\c")
+                            :gsub(",", "\\m")
+                            :gsub(";", "\\s")
+                            :gsub("~", "\\t")
+                        reagentParts[#reagentParts + 1] = safeName .. ":" .. (r.count or 1) .. ":" .. rIcon
+                    end
+                end
+                local reagentStr = #reagentParts > 0 and table.concat(reagentParts, ",") or ""
+                parts[#parts + 1] = spellIDStr .. "~" .. iconStr .. "~" .. reagentStr
                 break
             end
         end
@@ -383,7 +433,7 @@ function Professions:BroadcastRecipes(memberKey, profName)
 
     if #parts == 0 then return end
 
-    -- RECIPE_UPDATE|memberKey|profName|spellID~icon;spellID~icon;...
+    -- RECIPE_UPDATE|memberKey|profName|spellID~icon~reagents;...
     local msg = string.format("RECIPE_UPDATE|%s|%s|%s",
         memberKey, profName, table.concat(parts, ";"))
 
@@ -462,10 +512,16 @@ function Professions:OnCommReceived(message, _channel, sender)
         if not db[profName] then db[profName] = {} end
 
         for entry in recipeStr:gmatch("[^;]+") do
-            local spellIDStr, iconStr = entry:match("^(%d+)~(%d+)$")
-            if not spellIDStr then spellIDStr = entry:match("^(%d+)$") end
+            -- Parse: spellID~icon~reagents or spellID~icon or spellID
+            local spellIDStr, iconStr, reagentStr = entry:match("^(%d+)~(%d+)~(.*)$")
             if not spellIDStr then
-                -- Legacy: entry is a recipe name, skip
+                spellIDStr, iconStr = entry:match("^(%d+)~(%d+)$")
+            end
+            if not spellIDStr then
+                spellIDStr = entry:match("^(%d+)$")
+            end
+            if not spellIDStr then
+                -- Legacy name-based entry, skip
             else
                 local key = spellIDStr
                 local iconID = tonumber(iconStr)
@@ -476,6 +532,23 @@ function Professions:OnCommReceived(message, _channel, sender)
                 if iconID and iconID > 0 then
                     db[profName][key].icon = iconID
                 end
+
+                -- Parse reagents if provided and we don't have them yet
+                if reagentStr and reagentStr ~= "" and #db[profName][key].reagents == 0 then
+                    for rEntry in reagentStr:gmatch("[^,]+") do
+                        local rName, rCount, rIcon = rEntry:match("^(.+):(%d+):(%d+)$")
+                        if rName then
+                            -- Reverse backslash-based encoding (decode in reverse order)
+                            rName = rName:gsub("\\t", "~"):gsub("\\s", ";"):gsub("\\m", ","):gsub("\\c", ":"):gsub("\\\\", "\\")
+                            db[profName][key].reagents[#db[profName][key].reagents + 1] = {
+                                name  = rName,
+                                count = tonumber(rCount) or 1,
+                                icon  = tonumber(rIcon) or nil,
+                            }
+                        end
+                    end
+                end
+
                 -- Add sender as crafter if not already listed
                 local already = false
                 for _, ck in ipairs(db[profName][key].crafters) do

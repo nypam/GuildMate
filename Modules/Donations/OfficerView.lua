@@ -824,47 +824,74 @@ end
 function OfficerView:_ShowExportWindow(goal)
     local roster = GM.Donations:GetRoster()
 
-    -- Collect all period keys
-    local allPeriods, periodSet = {}, {}
-    for memberKey in pairs(GM.DB.sv.donations) do
-        local rec = GM.DB.sv.donations[memberKey]
-        if rec and rec.records then
-            for pk in pairs(rec.records) do
-                if not periodSet[pk] then
-                    periodSet[pk] = true
-                    allPeriods[#allPeriods + 1] = pk
+    -- CSV escape: wrap in quotes if value contains comma, quote, or newline
+    local function esc(s)
+        s = tostring(s or "")
+        if s:find('[,"\r\n]') then
+            return '"' .. s:gsub('"', '""') .. '"'
+        end
+        return s
+    end
+
+    -- Build CSV from the event log (one line per deposit)
+    local lines = { "Date,Time,Player,Realm,Rank,Amount (g),PeriodKey,EventId,Synthetic" }
+
+    local log = GM.DB:GetDonationLog() or {}
+
+    -- Sort by timestamp descending (newest first); synthetic events (ts=0) at bottom
+    table.sort(log, function(a, b)
+        local ta = a.timestamp or 0
+        local tb = b.timestamp or 0
+        if ta == 0 and tb ~= 0 then return false end
+        if tb == 0 and ta ~= 0 then return true end
+        return ta > tb
+    end)
+
+    for _, e in ipairs(log) do
+        local info = roster[e.memberKey]
+        local playerName = info and info.name or (e.memberKey:match("^(.+)-[^-]+$") or e.memberKey)
+        local realm = e.memberKey:match("^.+-([^-]+)$") or ""
+        local rank = info and (GuildControlGetRankName and GuildControlGetRankName(info.rankIndex + 1) or "") or ""
+        local dateStr, timeStr
+        if e.timestamp and e.timestamp > 0 then
+            dateStr = date("%Y-%m-%d", e.timestamp)
+            timeStr = date("%H:%M:%S", e.timestamp)
+        else
+            dateStr = ""
+            timeStr = ""
+        end
+        local gold = string.format("%.2f", (e.amount or 0) / 10000)
+        local synth = e.synthetic and "Yes" or "No"
+
+        lines[#lines + 1] = table.concat({
+            esc(dateStr), esc(timeStr), esc(playerName), esc(realm), esc(rank),
+            gold, esc(e.periodKey), esc(e.id), synth,
+        }, ",")
+    end
+
+    -- Fallback: if the event log is empty, export aggregated data for backward compat
+    if #lines == 1 then
+        lines[#lines + 1] = "-- No event log data. Showing aggregated donations: --"
+        lines[#lines + 1] = "Player,Realm,Rank,Period,Amount (g)"
+        for mk, rec in pairs(GM.DB.sv.donations or {}) do
+            local info = roster[mk]
+            local playerName = info and info.name or (mk:match("^(.+)-[^-]+$") or mk)
+            local realm = mk:match("^.+-([^-]+)$") or ""
+            local rank = info and (GuildControlGetRankName and GuildControlGetRankName(info.rankIndex + 1) or "") or ""
+            if rec.records then
+                for pk, amt in pairs(rec.records) do
+                    if type(amt) == "table" then
+                        amt = math.max(amt.own or 0, amt.synced or 0)
+                    end
+                    if amt > 0 then
+                        lines[#lines + 1] = table.concat({
+                            esc(playerName), esc(realm), esc(rank), esc(pk),
+                            string.format("%.2f", amt / 10000),
+                        }, ",")
+                    end
                 end
             end
         end
-    end
-    table.sort(allPeriods)
-
-    -- Build CSV
-    local lines = {}
-    local header = "Name,Rank,Online"
-    for _, pk in ipairs(allPeriods) do header = header .. "," .. pk end
-    header = header .. ",Total"
-    lines[#lines + 1] = header
-
-    local members = {}
-    for mk in pairs(GM.DB.sv.donations) do members[#members + 1] = mk end
-    table.sort(members)
-
-    for _, mk in ipairs(members) do
-        local rec  = GM.DB.sv.donations[mk]
-        local info = roster[mk]
-        local name = info and info.name or mk
-        local rankName = info and (GuildControlGetRankName and GuildControlGetRankName(info.rankIndex + 1) or "") or ""
-        local online = info and (info.online and "Yes" or "No") or ""
-
-        local row, total = name .. "," .. rankName .. "," .. online, 0
-        for _, pk in ipairs(allPeriods) do
-            local amt = (rec and rec.records and rec.records[pk]) or 0
-            total = total + amt
-            row = row .. "," .. string.format("%.2f", amt / 10000)
-        end
-        row = row .. "," .. string.format("%.2f", total / 10000)
-        lines[#lines + 1] = row
     end
 
     local csv = table.concat(lines, "\n")

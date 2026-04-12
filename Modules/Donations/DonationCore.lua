@@ -39,7 +39,6 @@ function Donations:OnRosterUpdate()
     for i = 1, count do
         local name, _, rankIndex, _, _, _, _, _, online, _, classFilename = GetGuildRosterInfo(i)
         if name then
-            -- GetGuildRosterInfo may return "Name-Realm" for cross-realm; split if needed
             local pname, prealm = name:match("^(.+)-(.+)$")
             pname  = pname  or name
             prealm = prealm or realm
@@ -54,11 +53,83 @@ function Donations:OnRosterUpdate()
             GM.DB:SetMemberRank(key, rankIndex)
         end
     end
+
+    -- Prune stale data: remove members no longer in guild
+    if next(_roster) then
+        local addonUsers = GM.DB.sv.addonUsers
+        if addonUsers then
+            for key in pairs(addonUsers) do
+                if not _roster[key] then
+                    addonUsers[key] = nil
+                end
+            end
+        end
+
+        -- Prune profession/recipe data for ex-members
+        if GM.Professions and GM.Professions.PruneStaleData then
+            GM.Professions:PruneStaleData(_roster)
+        end
+    end
 end
 
 -- Returns a snapshot of the roster (read-only)
 function Donations:GetRoster()
     return _roster
+end
+
+-- Wipe recent donation events (last N days) and re-scan the bank.
+-- Older events are preserved. Backs up to donationBackups first.
+-- Requires the guild bank to be open.
+function Donations:RescanRecent(days)
+    days = days or 3
+    local cutoff = time() - (days * 86400)
+
+    -- Backup first
+    GM.DB:BackupDonations("pre-rescan-" .. days .. "d")
+
+    -- Remove recent events from the log
+    local oldLog = GM.DB.sv.donationLog or {}
+    local keptLog = {}
+    local keptSeen = {}
+    local removedPeriods = {}
+
+    for _, e in ipairs(oldLog) do
+        local ts = e.timestamp or 0
+        if ts < cutoff or e.synthetic then
+            keptLog[#keptLog + 1] = e
+            keptSeen[e.id] = true
+        else
+            -- Track which member+period combos were affected
+            removedPeriods[e.memberKey] = removedPeriods[e.memberKey] or {}
+            removedPeriods[e.memberKey][e.periodKey] = true
+        end
+    end
+
+    GM.DB.sv.donationLog = keptLog
+    GM.DB.sv.donationLogSeen = keptSeen
+
+    -- Recompute totals for affected member+period combos from remaining log
+    for mk, periods in pairs(removedPeriods) do
+        for pk in pairs(periods) do
+            local sum = 0
+            for _, e in ipairs(keptLog) do
+                if e.memberKey == mk and e.periodKey == pk then
+                    sum = sum + (e.amount or 0)
+                end
+            end
+            local rec = GM.DB.sv.donations[mk]
+            if rec and rec.records then
+                if sum > 0 then
+                    rec.records[pk] = sum
+                else
+                    rec.records[pk] = nil
+                end
+            end
+        end
+    end
+
+    -- Now re-scan the bank (requires bank to be open)
+    self:ProcessTransactionLog()
 end
 
 -- ── Guild-wide sync ───────────────────────────────────────────────────────────
@@ -76,15 +147,55 @@ function Donations:BroadcastKnownTotals()
         Utils.PeriodKey(time() - prevOffset, periodType),
     }
 
+    -- Batch all totals into one message instead of N individual messages.
+    -- Format: DONATION_BATCH|memberKey:periodKey:total,memberKey:periodKey:total,...
+    -- Only include members currently in the guild roster.
+    local hasRoster = next(_roster) ~= nil
+    local parts = {}
+
     for memberKey, _ in pairs(GM.DB.sv.donations) do
-        for _, periodKey in ipairs(periods) do
-            local total = GM.DB:GetDonated(memberKey, periodKey)
-            if total > 0 then
-                GM:SendCommMessage("GuildMate",
-                    string.format("DONATION_TOTAL|%s|%s|%d", memberKey, periodKey, total),
-                    "GUILD")
+        -- Skip ex-members (only filter if roster is populated)
+        if hasRoster and not _roster[memberKey] then
+            -- skip
+        else
+            for _, periodKey in ipairs(periods) do
+                local total = GM.DB:GetDonated(memberKey, periodKey)
+                if total > 0 then
+                    parts[#parts + 1] = memberKey .. ":" .. periodKey .. ":" .. total
+                end
             end
         end
+    end
+
+    if #parts > 0 then
+        local msg = "DONATION_BATCH|" .. table.concat(parts, ",")
+        GM:SendCommMessage("GuildMate", msg, "GUILD")
+    end
+end
+
+-- Broadcast recent donation events from the log (to new clients).
+-- Default: last 60 days. Only real events (not synthetic).
+function Donations:BroadcastDonationLog(sinceDays)
+    local since = time() - ((sinceDays or 60) * 86400)
+    local log = GM.DB:GetDonationLog({ since = since })
+
+    local parts = {}
+    local hasRoster = next(_roster) ~= nil
+
+    for _, e in ipairs(log) do
+        if e.synthetic then
+            -- Skip synthetic events (can't reconstruct real timestamp)
+        elseif hasRoster and not _roster[e.memberKey] then
+            -- Skip ex-members
+        else
+            parts[#parts + 1] = string.format("%s:%d:%d:%s:%s",
+                e.memberKey, e.timestamp or 0, e.amount, e.periodKey, e.id)
+        end
+    end
+
+    if #parts > 0 then
+        local msg = "DEPOSIT_BATCH|" .. table.concat(parts, ",")
+        GM:SendCommMessage("GuildMate", msg, "GUILD")
     end
 end
 
@@ -104,12 +215,10 @@ function Donations:ProcessTransactionLog()
     local realm      = GetRealmName and GetRealmName() or "Unknown"
     local periodType = goal and goal.period or "weekly"
 
-    -- Pass 1: sum all deposits from the log, grouped by member+period.
-    -- The log holds up to 25 entries. We sum everything visible rather than
-    -- deduplicating by fingerprint, because identical deposits (same player,
-    -- same amount, same hour) produce the same fingerprint and get lost.
-    -- totals[memberKey][periodKey] = copperFromLog
-    local totals = {}
+    -- Build a snapshot of current bank log entries, then reconcile with DB.
+    -- This approach correctly handles duplicate same-amount deposits by
+    -- matching the set of log entries, not by time proximity.
+    local logEntries = {}  -- { memberKey, amount, approxTs, hour, periodKey }
 
     for i = 1, 25 do
         local txType, name, amount, year, month, day, hour = getMoneyTx(i)
@@ -123,42 +232,99 @@ function Donations:ProcessTransactionLog()
             local periodKey = Utils.PeriodKey(approxTs, periodType)
             local memberKey = Utils.MemberKey(name, realm)
 
-            if not totals[memberKey] then totals[memberKey] = {} end
-            totals[memberKey][periodKey] = (totals[memberKey][periodKey] or 0) + amount
+            logEntries[#logEntries + 1] = {
+                memberKey = memberKey,
+                amount    = amount,
+                approxTs  = approxTs,
+                hour      = math.floor(hour),
+                periodKey = periodKey,
+                idx       = i,
+            }
         end
     end
 
-    -- Pass 2: max-merge log totals into the DB (never decrease, only increase).
-    -- This is idempotent — safe to call on every bank open / money update.
+    -- Count how many times each (memberKey, amount) pair appears in the log.
+    -- The DB should contain exactly the same count of matching events in the
+    -- approximate time range (within ~2 days of now). If DB has FEWER, we
+    -- need to add the missing ones. If DB has MORE, something else filled in.
+    local logCounts = {}  -- [memberKey][amount] = count in current scan
+    for _, e in ipairs(logEntries) do
+        logCounts[e.memberKey] = logCounts[e.memberKey] or {}
+        logCounts[e.memberKey][e.amount] = (logCounts[e.memberKey][e.amount] or 0) + 1
+    end
+
+    -- Count DB events for same (memberKey, amount) in the last 3 days
+    -- (covers the full 25-entry log window).
+    local dbCutoff = time() - (3 * 86400)
+    local dbCounts = {}
+    for _, ev in ipairs(GM.DB.sv.donationLog or {}) do
+        if not ev.synthetic and ev.timestamp and ev.timestamp >= dbCutoff then
+            dbCounts[ev.memberKey] = dbCounts[ev.memberKey] or {}
+            dbCounts[ev.memberKey][ev.amount] = (dbCounts[ev.memberKey][ev.amount] or 0) + 1
+        end
+    end
+
+    -- For each log entry, determine if it's already covered by the DB.
+    -- We group by (memberKey, amount) and add `logCount - dbCount` new events.
+    local addedPairs = {}  -- track how many we've added per pair this scan
+    local newEvents = {}
     local changed = false
 
-    for memberKey, periods in pairs(totals) do
-        for periodKey, logTotal in pairs(periods) do
-            local prevTotal = GM.DB:GetDonated(memberKey, periodKey)
+    for _, e in ipairs(logEntries) do
+        local mk, amt = e.memberKey, e.amount
+        local logN = logCounts[mk][amt] or 0
+        local dbN  = (dbCounts[mk] and dbCounts[mk][amt]) or 0
+        local addedN = (addedPairs[mk] and addedPairs[mk][amt]) or 0
 
-            if logTotal > prevTotal then
-                GM.DB:SetDonationTotal(memberKey, periodKey, logTotal)
-                changed = true
+        -- We want to add (logN - dbN) new events total for this pair.
+        -- Skip this entry if we've already added enough.
+        if addedN + dbN < logN then
+            -- Unique ID using timestamp + index to avoid collisions within pair
+            local eventId = string.format("%s|%d|%d|%d",
+                mk, amt, e.approxTs, e.idx)
 
-                GM:SendCommMessage("GuildMate",
-                    string.format("DONATION_TOTAL|%s|%s|%d", memberKey, periodKey, logTotal),
-                    "GUILD")
+            if not GM.DB:HasDonationEvent(eventId) then
+                local event = {
+                    id        = eventId,
+                    timestamp = e.approxTs,
+                    memberKey = mk,
+                    amount    = amt,
+                    periodKey = e.periodKey,
+                }
+                if GM.DB:AddDonationEvent(event) then
+                    newEvents[#newEvents + 1] = event
+                    changed = true
+                    addedPairs[mk] = addedPairs[mk] or {}
+                    addedPairs[mk][amt] = (addedPairs[mk][amt] or 0) + 1
+                end
+            end
+        end
+    end
 
-                -- Announce in guild chat when an online member just met the goal
-                if goal and GM.DB:GetSetting("goalMetAnnounce")
-                   and prevTotal < goal.goldAmount
-                   and logTotal >= goal.goldAmount then
-                    local milestoneKey = memberKey .. "|" .. periodKey
-                    local rosterInfo = _roster[memberKey]
-                    if rosterInfo and rosterInfo.online
-                       and not _announcedMilestones[milestoneKey] then
-                        _announcedMilestones[milestoneKey] = true
-                        local name = rosterInfo.name or memberKey:match("^(.+)-[^-]+$") or memberKey
-                        SendChatMessage(
-                            string.format(GM.L["GOAL_MET_ANNOUNCE"],
-                                name, goal.period, Utils.FormatMoneyShort(goal.goldAmount)),
-                            "GUILD")
-                    end
+    -- For each new event, broadcast via DEPOSIT (new clients) and update
+    -- aggregated totals (old clients will receive via DONATION_BATCH below).
+    for _, event in ipairs(newEvents) do
+        -- New: DEPOSIT message with full event data
+        local msg = string.format("DEPOSIT|%s|%d|%d|%s|%s",
+            event.memberKey, event.timestamp, event.amount,
+            event.periodKey, event.id)
+        GM:SendCommMessage("GuildMate", msg, "GUILD")
+
+        -- Goal-met announcement
+        if goal and GM.DB:GetSetting("goalMetAnnounce") then
+            local newTotal = GM.DB:GetDonated(event.memberKey, event.periodKey)
+            local prevTotal = newTotal - event.amount
+            if prevTotal < goal.goldAmount and newTotal >= goal.goldAmount then
+                local milestoneKey = event.memberKey .. "|" .. event.periodKey
+                local rosterInfo = _roster[event.memberKey]
+                if rosterInfo and rosterInfo.online
+                   and not _announcedMilestones[milestoneKey] then
+                    _announcedMilestones[milestoneKey] = true
+                    local dname = rosterInfo.name or event.memberKey:match("^(.+)-[^-]+$") or event.memberKey
+                    SendChatMessage(
+                        string.format(GM.L["GOAL_MET_ANNOUNCE"],
+                            dname, goal.period, Utils.FormatMoneyShort(goal.goldAmount)),
+                        "GUILD")
                 end
             end
         end
@@ -168,9 +334,7 @@ function Donations:ProcessTransactionLog()
         GM.MainFrame:RefreshActiveView()
     end
 
-    -- Always broadcast all known totals after a bank scan, regardless of whether
-    -- new transactions were found.  Any guild member who opens the bank will push
-    -- their full knowledge to every online officer — not just newly-found entries.
+    -- Broadcast aggregated totals for backward compatibility with old clients
     Donations:BroadcastKnownTotals()
 end
 
@@ -215,14 +379,82 @@ end
 function Donations:OnCommReceived(message, _channel, sender)
     local cmd = message:match("^([%w_]+)")
 
-    if cmd == "DONATION_TOTAL" then
-        -- DONATION_TOTAL|memberKey|periodKey|total
+    if cmd == "DEPOSIT" then
+        -- DEPOSIT|memberKey|timestamp|amount|periodKey|eventId
+        local _, mk, tsStr, amtStr, pk, eventId = message:match("^([%w_]+)|([^|]+)|(%d+)|(%d+)|([^|]+)|(.+)$")
+        local ts = tonumber(tsStr)
+        local amt = tonumber(amtStr)
+        if mk and ts and amt and pk and eventId and not GM.DB:HasDonationEvent(eventId) then
+            GM.DB:AddDonationEvent({
+                id        = eventId,
+                timestamp = ts,
+                memberKey = mk,
+                amount    = amt,
+                periodKey = pk,
+            })
+            if not Donations._refreshPending then
+                Donations._refreshPending = true
+                C_Timer.After(0.5, function()
+                    Donations._refreshPending = false
+                    GM.MainFrame:RefreshActiveView()
+                end)
+            end
+        end
+
+    elseif cmd == "DEPOSIT_BATCH" then
+        -- DEPOSIT_BATCH|mk:ts:amt:pk:id,mk:ts:amt:pk:id,...
+        local _, batchStr = message:match("^([%w_]+)|(.+)$")
+        if batchStr then
+            for entry in batchStr:gmatch("[^,]+") do
+                local mk, tsStr, amtStr, pk, eventId = entry:match("^([^:]+):(%d+):(%d+):([%d%-W]+):(.+)$")
+                local ts = tonumber(tsStr)
+                local amt = tonumber(amtStr)
+                if mk and ts and amt and pk and eventId and not GM.DB:HasDonationEvent(eventId) then
+                    GM.DB:AddDonationEvent({
+                        id        = eventId,
+                        timestamp = ts,
+                        memberKey = mk,
+                        amount    = amt,
+                        periodKey = pk,
+                    })
+                end
+            end
+            if not Donations._refreshPending then
+                Donations._refreshPending = true
+                C_Timer.After(0.5, function()
+                    Donations._refreshPending = false
+                    GM.MainFrame:RefreshActiveView()
+                end)
+            end
+        end
+
+    elseif cmd == "DONATION_BATCH" then
+        -- DONATION_BATCH|memberKey:periodKey:total,memberKey:periodKey:total,...
+        local _, batchStr = message:match("^([%w_]+)|(.+)$")
+        if batchStr then
+            for entry in batchStr:gmatch("[^,]+") do
+                local mk, pk, totalStr = entry:match("^(.+):([%d%-W]+):(%d+)$")
+                local total = tonumber(totalStr)
+                if mk and pk and total then
+                    GM.DB:SetDonationTotal(mk, pk, total)
+                end
+            end
+            -- Debounce refresh
+            if not Donations._refreshPending then
+                Donations._refreshPending = true
+                C_Timer.After(0.5, function()
+                    Donations._refreshPending = false
+                    GM.MainFrame:RefreshActiveView()
+                end)
+            end
+        end
+
+    elseif cmd == "DONATION_TOTAL" then
+        -- Legacy: single DONATION_TOTAL|memberKey|periodKey|total (backward compat)
         local _, memberKey, periodKey, totalStr = message:match("^([%w_]+)|([^|]+)|([^|]+)|(%d+)$")
         local total = tonumber(totalStr)
         if memberKey and periodKey and total then
             GM.DB:SetDonationTotal(memberKey, periodKey, total)
-            -- Debounce: a bulk sync sends many messages at once; only redraw once
-            -- they've all landed rather than once per message.
             if not Donations._refreshPending then
                 Donations._refreshPending = true
                 C_Timer.After(0.5, function()
@@ -251,6 +483,10 @@ function Donations:OnCommReceived(message, _channel, sender)
                 end
                 if Donations.BroadcastKnownTotals then
                     Donations:BroadcastKnownTotals()
+                end
+                -- New format: send individual events for richer data
+                if Donations.BroadcastDonationLog then
+                    Donations:BroadcastDonationLog(60)
                 end
                 -- Broadcast professions + recipes
                 if GM.Professions then
