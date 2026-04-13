@@ -701,7 +701,7 @@ function OfficerView:_RenderMemberRow(L, parent, row)
                 Utils.FormatMoneyShort(row.donated),
                 Utils.FormatMoneyShort(row.goalAmount), pct), 0.8, 0.8, 0.8)
             if row.coveredByCredit then
-                GameTooltip:AddLine("Covered by carryover credit from a previous period", 0.4, 0.8, 0.4, true)
+                GameTooltip:AddLine("Covered by credit from a previous overpayment", 0.4, 0.8, 0.4, true)
             elseif periodsAhead > 0 then
                 local pw = (GM.DB:GetActiveGoal() and GM.DB:GetActiveGoal().period == "monthly") and GM.L["MONTH_FULL"] or GM.L["WEEK_FULL"]
                 GameTooltip:AddLine(string.format(GM.L["AHEAD_TOOLTIP"], periodsAhead, pw, periodsAhead > 1 and "s" or ""), 0.4, 0.8, 0.4)
@@ -793,7 +793,7 @@ function OfficerView:_RenderMemberRow(L, parent, row)
             Utils.FormatMoneyShort(row.donated),
             Utils.FormatMoneyShort(row.goalAmount))
         if row.coveredByCredit then
-            amtStr = amtStr .. " |cff5fba47(crd)|r"
+            amtStr = amtStr .. " |cff5fba47(credit)|r"
         elseif periodsAhead > 0 then
             local pw = (GM.DB:GetActiveGoal() and GM.DB:GetActiveGoal().period == "monthly") and GM.L["MONTH_SHORT"] or GM.L["WEEK_SHORT"]
             amtStr = amtStr .. " |cff5fba47" .. string.format(GM.L["AHEAD_SHORT"], periodsAhead, pw) .. "|r"

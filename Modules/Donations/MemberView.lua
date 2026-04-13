@@ -210,7 +210,7 @@ function MemberView:Render()
             if actualDonated == 0 and donated >= goal.goldAmount then
                 local creditPeriods = math.floor(donated / goal.goldAmount)
                 summaryFs:SetText(string.format(
-                    "|cff5fba47Goal covered|r by %s carried over  (%d %s%s of credit)",
+                    "|cff5fba47Goal covered|r by credit  (%s remaining, %d %s%s)",
                     Utils.FormatMoneyShort(donated),
                     creditPeriods, pw, creditPeriods > 1 and "s" or ""))
             elseif periodsAhead > 0 then
