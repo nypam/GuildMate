@@ -4,6 +4,16 @@ All notable changes to GuildMate will be documented in this file.
 
 ## [Unreleased]
 
+## [v0.4.6] - 2026-04-13
+
+### Added
+- Overpayment carries forward across periods. Donate 4× the weekly goal once and the next 3 weeks count as met.
+- Officer roster shows `(credit)` next to members covered by carryover.
+
+### Fixed
+- Double `v` in the displayed version string (`vv0.4.5` → `v0.4.6`).
+- Amount column overlapping the progress bar in the officer roster.
+
 ## [v0.4.5] - 2026-04-12
 
 ### Fixed

@@ -10,7 +10,7 @@ local GM = LibStub("AceAddon-3.0"):NewAddon("GuildMate",
 
 do
     local v = (GetAddOnMetadata or C_AddOns and C_AddOns.GetAddOnMetadata or function() end)("GuildMate", "Version")
-    if not v or v:find("project%-version") then v = "0.4.5-dev" end
+    if not v or v:find("project%-version") then v = "0.4.6-dev" end
     -- Normalize: some packager configurations substitute @project-version@
     -- with the literal tag name (e.g. "v0.4.5") rather than the stripped
     -- version. Strip any leading "v" so display strings can prefix "v"
