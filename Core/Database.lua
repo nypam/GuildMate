@@ -648,6 +648,90 @@ function DB:GetDonated(memberKey, periodKey)
     return r
 end
 
+-- Convert a period key like "2026-W15" / "2026-04" into a comparable integer.
+-- Consecutive periods differ by 1 — useful for counting gaps between records.
+local function _PeriodOrdinal(pk)
+    if not pk then return 0 end
+    local y, w = pk:match("^(%d+)%-W(%d+)$")
+    if y and w then return tonumber(y) * 53 + tonumber(w) end
+    local y2, m = pk:match("^(%d+)%-(%d+)$")
+    if y2 and m then return tonumber(y2) * 12 + tonumber(m) end
+    return 0
+end
+
+-- Effective donated for a period including carryover from prior overpayments.
+-- Walks every period the member has on record from the earliest up through
+-- `currentPeriodKey`, accumulating surplus where they overpaid and depleting
+-- it (by `goal.goldAmount`) for each missed period in between. Returns the
+-- effective amount available against the current period's goal — i.e. the
+-- player's donation plus any unconsumed carryover credit.
+--
+-- If goal is nil or has no goldAmount, falls back to GetDonated (no carryover).
+function DB:GetEffectiveDonated(memberKey, currentPeriodKey, goal)
+    if not currentPeriodKey then return 0 end
+    if not goal or not goal.goldAmount or goal.goldAmount <= 0 then
+        return self:GetDonated(memberKey, currentPeriodKey)
+    end
+
+    local rec = self.sv.donations[memberKey]
+    if not rec or not rec.records then return 0 end
+
+    -- Collect period keys with non-zero donations up to (and including) current.
+    local periodKeys = {}
+    for pk in pairs(rec.records) do
+        if pk <= currentPeriodKey then
+            local amt = self:GetDonated(memberKey, pk)
+            if amt and amt > 0 then
+                periodKeys[#periodKeys + 1] = pk
+            end
+        end
+    end
+    if #periodKeys == 0 then
+        return self:GetDonated(memberKey, currentPeriodKey)
+    end
+    table.sort(periodKeys)
+
+    local goalAmount = goal.goldAmount
+    local surplus    = 0
+    local prevOrd    = nil
+
+    for _, pk in ipairs(periodKeys) do
+        local ord = _PeriodOrdinal(pk)
+        if prevOrd then
+            -- Deplete surplus by goal for each missed period in the gap.
+            local missed = ord - prevOrd - 1
+            if missed > 0 then
+                if missed * goalAmount >= surplus then
+                    surplus = 0
+                else
+                    surplus = surplus - missed * goalAmount
+                end
+            end
+        end
+        if pk == currentPeriodKey then
+            return self:GetDonated(memberKey, pk) + surplus
+        end
+        local donated = self:GetDonated(memberKey, pk)
+        surplus = math.max(0, surplus + donated - goalAmount)
+        prevOrd = ord
+    end
+
+    -- Current period had no record. Apply gap depletion from the last record
+    -- through every period up to (but not including) current.
+    if prevOrd then
+        local endOrd = _PeriodOrdinal(currentPeriodKey)
+        local missed = endOrd - prevOrd - 1
+        if missed > 0 then
+            if missed * goalAmount >= surplus then
+                surplus = 0
+            else
+                surplus = surplus - missed * goalAmount
+            end
+        end
+    end
+    return surplus
+end
+
 -- Update a member's rank index (called on roster refresh)
 function DB:SetMemberRank(memberKey, rankIndex)
     if self._readOnly then return end

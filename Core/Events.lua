@@ -94,7 +94,9 @@ function Events.OnPlayerLogin()
         local realm      = GetRealmName and GetRealmName() or ""
         local playerKey  = GM.Utils.MemberKey(playerName, realm)
         local periodKey  = GM.Utils.PeriodKey(time(), goal.period)
-        local donated    = GM.DB:GetDonated(playerKey, periodKey)
+        -- Use effective so a player carried by previous overpayment isn't
+        -- nagged on login.
+        local donated    = GM.DB:GetEffectiveDonated(playerKey, periodKey, goal)
 
         if donated < goal.goldAmount then
             local remaining = goal.goldAmount - donated

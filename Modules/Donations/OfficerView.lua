@@ -279,12 +279,14 @@ function OfficerView:_RenderRosterTab(L, parent, goal, periodKey)
 
     L:AddSpacer(4)
 
-    -- Build sorted member list
+    -- Build sorted member list. Use effective-donated so a member who
+    -- overpaid in a previous period and has carryover credit shows as paid.
     local roster = GM.Donations:GetRoster()
     local rows = {}
     for key, info in pairs(roster) do
-        local donated = (goal and periodKey) and GM.DB:GetDonated(key, periodKey) or 0
-        local frac    = (goal and goal.goldAmount > 0) and (donated / goal.goldAmount) or 0
+        local actualDonated = (goal and periodKey) and GM.DB:GetDonated(key, periodKey) or 0
+        local effective = (goal and periodKey) and GM.DB:GetEffectiveDonated(key, periodKey, goal) or 0
+        local frac    = (goal and goal.goldAmount > 0) and (effective / goal.goldAmount) or 0
         local inScope = (not goal) or goal.targetRanks[info.rankIndex]
 
         local status
@@ -301,9 +303,11 @@ function OfficerView:_RenderRosterTab(L, parent, goal, periodKey)
                 rankIndex     = info.rankIndex,
                 classFilename = info.classFilename,
                 online        = info.online,
-                donated       = donated,
+                donated       = effective,
+                actualDonated = actualDonated,
                 goalAmount    = goal and goal.goldAmount or 0,
                 frac          = frac,
+                coveredByCredit = (actualDonated == 0 and effective >= (goal and goal.goldAmount or 0) and goal),
             }
         end
     end
@@ -495,7 +499,8 @@ function OfficerView:_RenderGoalCard(L, parent, goal, periodKey)
     -- Space before progress bar
     L:AddSpacer(10)
 
-    -- Overall progress
+    -- Overall progress — use effective-donated so members covered by their
+    -- own prior overpayment count as having met the goal.
     local roster = GM.Donations:GetRoster()
     local total, met, totalDonated = 0, 0, 0
     for key, info in pairs(roster) do
@@ -503,7 +508,8 @@ function OfficerView:_RenderGoalCard(L, parent, goal, periodKey)
             total = total + 1
             local donated = GM.DB:GetDonated(key, periodKey)
             totalDonated = totalDonated + donated
-            if donated >= goal.goldAmount then met = met + 1 end
+            local effective = GM.DB:GetEffectiveDonated(key, periodKey, goal)
+            if effective >= goal.goldAmount then met = met + 1 end
         end
     end
     local frac = total > 0 and (met / total) or 0
@@ -633,7 +639,9 @@ function OfficerView:_RenderActionBar(L, parent, goal)
         local periodKey = Utils.PeriodKey(time(), goal.period)
         for key, info in pairs(GM.Donations:GetRoster()) do
             if goal.targetRanks[info.rankIndex] then
-                if GM.DB:GetDonated(key, periodKey) < goal.goldAmount then
+                -- Count only members whose effective total (including
+                -- carryover credit) is below the goal.
+                if GM.DB:GetEffectiveDonated(key, periodKey, goal) < goal.goldAmount then
                     incompleteCount = incompleteCount + 1
                 end
             end
@@ -782,7 +790,9 @@ function OfficerView:_RenderMemberRow(L, parent, row)
         amtStr = string.format("%s / %s",
             Utils.FormatMoneyShort(row.donated),
             Utils.FormatMoneyShort(row.goalAmount))
-        if periodsAhead > 0 then
+        if row.coveredByCredit then
+            amtStr = amtStr .. "  |cff5fba47(carried)|r"
+        elseif periodsAhead > 0 then
             local pw = (GM.DB:GetActiveGoal() and GM.DB:GetActiveGoal().period == "monthly") and GM.L["MONTH_SHORT"] or GM.L["WEEK_SHORT"]
             amtStr = amtStr .. "  |cff5fba47" .. string.format(GM.L["AHEAD_SHORT"], periodsAhead, pw) .. "|r"
         end

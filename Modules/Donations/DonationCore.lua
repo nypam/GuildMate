@@ -572,7 +572,8 @@ function Donations:RemindIncomplete()
     for key, info in pairs(_roster) do
         if info.online and goal.targetRanks[info.rankIndex]
            and info.name ~= playerName then
-            local donated = GM.DB:GetDonated(key, periodKey)
+            -- Effective: if a member is covered by carryover, don't whisper.
+            local donated = GM.DB:GetEffectiveDonated(key, periodKey, goal)
             if donated < goal.goldAmount then
                 local remaining = goal.goldAmount - donated
                 local whisper = string.format(GM.L["WHISPER_TEMPLATE"],
@@ -600,7 +601,8 @@ function Donations:AnnounceProgress()
     for key, info in pairs(_roster) do
         if goal.targetRanks[info.rankIndex] then
             total = total + 1
-            local donated = GM.DB:GetDonated(key, periodKey)
+            -- Effective: members covered by carryover credit count as met.
+            local donated = GM.DB:GetEffectiveDonated(key, periodKey, goal)
             if donated >= goal.goldAmount then met = met + 1 end
         end
     end

@@ -33,7 +33,11 @@ function MemberView:Render()
     end
 
     local periodKey = goal and Utils.PeriodKey(time(), goal.period) or nil
-    local donated   = (goal and periodKey and goalApplies) and GM.DB:GetDonated(memberKey, periodKey) or 0
+    -- Use effective-donated so previous-period overpayments carry forward to
+    -- cover the current period (e.g. paying 4 weeks at once covers the next
+    -- 3 weeks too).
+    local donated   = (goal and periodKey and goalApplies) and GM.DB:GetEffectiveDonated(memberKey, periodKey, goal) or 0
+    local actualDonated = (goal and periodKey and goalApplies) and GM.DB:GetDonated(memberKey, periodKey) or 0
     local rawFrac   = (goal and goal.goldAmount > 0 and goalApplies) and (donated / goal.goldAmount) or 0
     local frac      = math.min(1, rawFrac)
     -- Grey palette when the goal is informational-only (doesn't apply to us).
@@ -125,7 +129,7 @@ function MemberView:Render()
             for key, info in pairs(roster) do
                 if goal.targetRanks and goal.targetRanks[info.rankIndex] then
                     total = total + 1
-                    if GM.DB:GetDonated(key, periodKey) >= goal.goldAmount then
+                    if GM.DB:GetEffectiveDonated(key, periodKey, goal) >= goal.goldAmount then
                         met = met + 1
                     end
                 end
@@ -201,7 +205,15 @@ function MemberView:Render()
             summaryFs:SetText("|cffaaaaaa" .. GM.L["GOAL_NOT_APPLICABLE"] .. "|r")
         elseif frac >= 1.0 then
             local pw = goal.period == "monthly" and GM.L["MONTH_FULL"] or GM.L["WEEK_FULL"]
-            if periodsAhead > 0 then
+            -- When the current period is being covered by carryover (player
+            -- didn't actually donate this period), show the credit message.
+            if actualDonated == 0 and donated >= goal.goldAmount then
+                local creditPeriods = math.floor(donated / goal.goldAmount)
+                summaryFs:SetText(string.format(
+                    "|cff5fba47Goal covered|r by %s carried over  (%d %s%s of credit)",
+                    Utils.FormatMoneyShort(donated),
+                    creditPeriods, pw, creditPeriods > 1 and "s" or ""))
+            elseif periodsAhead > 0 then
                 summaryFs:SetText(string.format(GM.L["GOAL_MET_AHEAD"],
                     Utils.FormatMoneyShort(donated), periodsAhead, pw, periodsAhead > 1 and "s" or ""))
             else
@@ -278,18 +290,69 @@ function MemberView:Render()
         end
     end
 
-    -- Add future "covered" periods if current period has overpayment
-    if goal and goalAmt > 0 and periodKey then
-        local currentDonated = GM.DB:GetDonated(memberKey, periodKey)
-        local ahead = math.floor(currentDonated / goalAmt) - 1
-        if ahead > 0 then
-            for i = 1, ahead do
+    -- Mark periods as "covered by carryover" using the same logic as the
+    -- current-period status: walk all real records up through the current
+    -- period, accumulating surplus and depleting it for any gap.
+    -- A period with 0 actual donation is "covered" if surplus >= goal at
+    -- that point. Includes the current period and a few future periods if
+    -- the credit reaches that far.
+    if goal and goalAmt > 0 then
+        local sortedKnown = {}
+        for pk in pairs(knownPeriods) do sortedKnown[#sortedKnown + 1] = pk end
+        table.sort(sortedKnown)
+
+        -- Determine how far forward to project (where the surplus runs out).
+        local surplus = 0
+        local prevOrd = nil
+        local function _Ord(pk)
+            local y, w = pk:match("^(%d+)%-W(%d+)$")
+            if y then return tonumber(y) * 53 + tonumber(w) end
+            local y2, m = pk:match("^(%d+)%-(%d+)$")
+            if y2 then return tonumber(y2) * 12 + tonumber(m) end
+            return 0
+        end
+
+        for _, pk in ipairs(sortedKnown) do
+            local ord = _Ord(pk)
+            if prevOrd then
+                local missed = ord - prevOrd - 1
+                surplus = math.max(0, surplus - missed * goalAmt)
+            end
+            local amt = GM.DB:GetDonated(memberKey, pk)
+            -- If this period has no actual donation but surplus covers goal,
+            -- mark it "covered" in the timeline.
+            if amt == 0 and surplus >= goalAmt then
+                for _, hr in ipairs(historyRows) do
+                    if hr.periodKey == pk then hr.covered = true; break end
+                end
+            end
+            surplus = math.max(0, surplus + amt - goalAmt)
+            prevOrd = ord
+        end
+
+        -- Project surplus forward into future periods until it depletes.
+        if periodKey and surplus >= goalAmt then
+            local currentOrd = _Ord(periodKey)
+            -- If our last record is before current, deplete first to current.
+            if prevOrd and prevOrd < currentOrd then
+                local gap = currentOrd - prevOrd
+                surplus = math.max(0, surplus - gap * goalAmt)
+                if surplus >= goalAmt and not knownPeriods[periodKey] then
+                    historyRows[#historyRows + 1] = { periodKey = periodKey, amount = 0, covered = true }
+                    knownPeriods[periodKey] = true
+                end
+            end
+            -- Then walk forward.
+            local i = 1
+            while surplus >= goalAmt and i <= 12 do
+                surplus = surplus - goalAmt
                 local futureTs = time() + (i * periodOffset)
                 local futurePk = Utils.PeriodKey(futureTs, periodType)
                 if not knownPeriods[futurePk] then
                     historyRows[#historyRows + 1] = { periodKey = futurePk, amount = 0, covered = true }
                     knownPeriods[futurePk] = true
                 end
+                i = i + 1
             end
         end
     end
