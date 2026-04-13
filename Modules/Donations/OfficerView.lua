@@ -700,7 +700,9 @@ function OfficerView:_RenderMemberRow(L, parent, row)
             GameTooltip:AddLine(string.format(GM.L["DONATED_TOOLTIP"],
                 Utils.FormatMoneyShort(row.donated),
                 Utils.FormatMoneyShort(row.goalAmount), pct), 0.8, 0.8, 0.8)
-            if periodsAhead > 0 then
+            if row.coveredByCredit then
+                GameTooltip:AddLine("Covered by carryover credit from a previous period", 0.4, 0.8, 0.4, true)
+            elseif periodsAhead > 0 then
                 local pw = (GM.DB:GetActiveGoal() and GM.DB:GetActiveGoal().period == "monthly") and GM.L["MONTH_FULL"] or GM.L["WEEK_FULL"]
                 GameTooltip:AddLine(string.format(GM.L["AHEAD_TOOLTIP"], periodsAhead, pw, periodsAhead > 1 and "s" or ""), 0.4, 0.8, 0.4)
             end
@@ -784,27 +786,29 @@ function OfficerView:_RenderMemberRow(L, parent, row)
         or ("Rank " .. row.rankIndex)
     RowText(180, 96, "|cffaaaaaa" .. Utils.Truncate(rankName, 10) .. "|r")
 
-    -- Amount + ahead indicator
+    -- Amount + ahead/carried indicator
     local amtStr
     if row.goalAmount > 0 then
         amtStr = string.format("%s / %s",
             Utils.FormatMoneyShort(row.donated),
             Utils.FormatMoneyShort(row.goalAmount))
         if row.coveredByCredit then
-            amtStr = amtStr .. "  |cff5fba47(carried)|r"
+            amtStr = amtStr .. " |cff5fba47(crd)|r"
         elseif periodsAhead > 0 then
             local pw = (GM.DB:GetActiveGoal() and GM.DB:GetActiveGoal().period == "monthly") and GM.L["MONTH_SHORT"] or GM.L["WEEK_SHORT"]
-            amtStr = amtStr .. "  |cff5fba47" .. string.format(GM.L["AHEAD_SHORT"], periodsAhead, pw) .. "|r"
+            amtStr = amtStr .. " |cff5fba47" .. string.format(GM.L["AHEAD_SHORT"], periodsAhead, pw) .. "|r"
         end
     else
         amtStr = Utils.FormatMoneyShort(row.donated)
     end
-    RowText(280, 150, amtStr)
+    -- Wider amount column to fit "1250g / 100g (crd)" etc. Bar pushed right
+    -- accordingly so the two no longer overlap.
+    RowText(280, 180, amtStr)
 
     -- Progress bar
     if row.goalAmount > 0 then
         local barFrame = CreateFrame("Frame", nil, rowFrame)
-        barFrame:SetPoint("LEFT", rowFrame, "LEFT", 404, 0)
+        barFrame:SetPoint("LEFT", rowFrame, "LEFT", 470, 0)
         barFrame:SetPoint("RIGHT", rowFrame, "RIGHT", -80, 0)
         barFrame:SetHeight(14)
 
